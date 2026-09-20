@@ -1,6 +1,6 @@
 /**
  * The Coin Game — Simulador Kanban & Batch Size
- * Frontend Client (WebSockets, Lobby, Facilitador & Alocação Dinâmica)
+ * Frontend Client (WebSockets, Auto-Scroll e Painel de Alocação por Checkboxes)
  */
 
 // --- Estado Global do Cliente ---
@@ -12,6 +12,9 @@ let currentRoomState = null;
 let soundEnabled = true;
 let soloOverride = false;
 let localTimerInterval = null;
+
+// Mapa de alocação local editável pelo Facilitador: { playerId: [1, 2, ...] }
+let localAllocationMap = {};
 
 localStorage.setItem("coin_game_player_id", myPlayerId);
 
@@ -37,12 +40,9 @@ const metricFirstDelivery = document.getElementById("metricFirstDelivery");
 const metricBatchSize = document.getElementById("metricBatchSize");
 const metricCompletedCoins = document.getElementById("metricCompletedCoins");
 
-// Painel do Facilitador
+// Barra do Facilitador
 const facilitatorBar = document.getElementById("facilitatorBar");
-const facLobbyControls = document.getElementById("facLobbyControls");
-const facInGameControls = document.getElementById("facInGameControls");
-const facLobbyStatusText = document.getElementById("facLobbyStatusText");
-const btnMasterStartGame = document.getElementById("btnMasterStartGame");
+const facRoundControls = document.getElementById("facRoundControls");
 const roundStatusText = document.getElementById("roundStatusText");
 const btnStartWaterfall = document.getElementById("btnStartWaterfall");
 const btnStartKanban = document.getElementById("btnStartKanban");
@@ -61,9 +61,13 @@ const waitingRoomSubtitle = document.getElementById("waitingRoomSubtitle");
 const lobbyPlayersCountBadge = document.getElementById("lobbyPlayersCountBadge");
 const lobbyPlayersRoster = document.getElementById("lobbyPlayersRoster");
 
-// Visão 2: Dashboard do Facilitador em Jogo
+// Visão 2: Painel de Alocação do Facilitador (com Checkboxes)
 const facilitatorDashboardCard = document.getElementById("facilitatorDashboardCard");
-const facDashStats = document.getElementById("facDashStats");
+const allocationTableBody = document.getElementById("allocationTableBody");
+const emptyAllocationMsg = document.getElementById("emptyAllocationMsg");
+const btnAutoAllocate = document.getElementById("btnAutoAllocate");
+const btnValidateAndStart = document.getElementById("btnValidateAndStart");
+const allocationCoverageBadge = document.getElementById("allocationCoverageBadge");
 
 // Visão 3: Área de Trabalho do Jogador (Multi-Estações)
 const playerWorkspace = document.getElementById("playerWorkspace");
@@ -159,7 +163,7 @@ function showToast(message, duration = 3500) {
   }, duration);
 }
 
-// --- Inicialização ---
+// --- Inicialização da Aplicação ---
 function initApp() {
   if (myPlayerName) {
     inputPlayerName.value = myPlayerName;
@@ -221,9 +225,14 @@ function setupEventListeners() {
     renderMainContent(currentRoomState);
   });
 
-  // Facilitador: Botão Mestre Iniciar Partida
-  btnMasterStartGame.addEventListener("click", () => {
-    sendWsMessage({ action: "START_GAME" });
+  // Facilitador: Botão de Auto-Distribuir Equitativamente
+  btnAutoAllocate.addEventListener("click", () => {
+    autoDistributeEquitably();
+  });
+
+  // Facilitador: Botão Validar Alocação e Iniciar Jogo
+  btnValidateAndStart.addEventListener("click", () => {
+    validateAndStartGame();
   });
 
   // Facilitador: Voltar ao Lobby
@@ -327,7 +336,31 @@ function joinRoom(roomId, playerName) {
   const newUrl = `${window.location.pathname}?room=${currentRoomId}`;
   window.history.replaceState({ path: newUrl }, "", newUrl);
 
+  // Auto-scroll e transição imediata para a tela de jogo
+  transitionToGameScreen();
+
   connectWebSocket(currentRoomId, playerName);
+}
+
+// Oculta completamente o lobby inicial e rola suavemente para o painel relevante
+function transitionToGameScreen() {
+  lobbyScreen.classList.remove("active");
+  lobbyScreen.style.display = "none";
+
+  gameScreen.classList.add("active");
+  gameScreen.style.display = "flex";
+
+  window.scrollTo({ top: 0, behavior: "smooth" });
+
+  setTimeout(() => {
+    const waitingCard = document.getElementById("waitingRoomCard");
+    const facCard = document.getElementById("facilitatorDashboardCard");
+    if (waitingCard && waitingCard.style.display !== "none") {
+      waitingCard.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else if (facCard && facCard.style.display !== "none") {
+      facCard.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, 120);
 }
 
 function connectWebSocket(roomId, playerName) {
@@ -353,8 +386,7 @@ function connectWebSocket(roomId, playerName) {
       playerId: myPlayerId
     });
 
-    lobbyScreen.classList.remove("active");
-    gameScreen.classList.add("active");
+    transitionToGameScreen();
   };
 
   socket.onmessage = (event) => {
@@ -398,6 +430,13 @@ function handleServerMessage(msg) {
 
   if (msg.type === "GAME_STARTED") {
     soundFirstDelivery();
+    // Auto-scroll suave para a área de trabalho do jogador assim que o jogo inicia
+    setTimeout(() => {
+      const wp = document.getElementById("playerWorkspace");
+      if (wp && wp.style.display !== "none") {
+        wp.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 150);
   } else if (msg.first_delivery_event) {
     soundFirstDelivery();
   } else if (msg.round_completed_event) {
@@ -442,16 +481,23 @@ function renderGameState(state) {
     displayPlayerRole.style.color = isFacilitator ? "#c4b5fd" : "#34d399";
   }
 
+  // Sincroniza o mapa de alocação local a partir do servidor se ainda não foi editado
+  state.players.forEach(p => {
+    if (!localAllocationMap[p.id] || localAllocationMap[p.id].length === 0) {
+      localAllocationMap[p.id] = p.stations || [];
+    }
+  });
+
   // Top Metrics
   renderTopMetrics(state.round);
 
-  // Painel do Facilitador
-  renderFacilitatorControls(state, isFacilitator);
+  // Barra do Facilitador
+  renderFacilitatorBar(state, isFacilitator);
 
   // Pipeline Kanban
   renderPipelineBoard(state);
 
-  // Área de Conteúdo Principal (Lobby vs Dashboard vs Estações)
+  // Área de Conteúdo Principal
   renderMainContent(state);
 }
 
@@ -497,46 +543,35 @@ function formatTimer(seconds) {
   return `${mm}:${ss}.${ms}`;
 }
 
-// --- Painel do Facilitador ---
-function renderFacilitatorControls(state, isFacilitator) {
+// --- Barra Superior do Facilitador ---
+function renderFacilitatorBar(state, isFacilitator) {
   if (!isFacilitator) {
     facilitatorBar.style.display = "none";
     return;
   }
 
   facilitatorBar.style.display = "block";
-  const isLobby = state.room_phase === "lobby";
+  const round = state.round;
+  const isRunning = round.status === "running";
+  const isCompleted = round.status === "completed";
 
-  if (isLobby) {
-    facLobbyControls.style.display = "flex";
-    facInGameControls.style.display = "none";
-
-    const guests = state.guests_count || 0;
-    facLobbyStatusText.textContent = `Aguardando jogadores entrarem... (${guests} convidados prontos)`;
-    btnMasterStartGame.innerHTML = `<span>🚀 Iniciar Partida (Alocar ${guests > 0 ? guests : "Solo"} Jogador${guests === 1 ? "" : "es"})</span>`;
+  if (state.room_phase === "lobby") {
+    roundStatusText.textContent = `Aguardando Início • ${state.guests_count || 0} convidados na sala`;
+    roundStatusText.className = "round-status-tag";
+  } else if (isRunning) {
+    roundStatusText.textContent = `Rodada ${round.round_number} (${round.round_type.toUpperCase()} - Lote ${round.batch_size})`;
+    roundStatusText.className = "round-status-tag running";
+  } else if (isCompleted) {
+    roundStatusText.textContent = `Rodada ${round.round_number} Finalizada (${round.total_delivery_time}s)`;
+    roundStatusText.className = "round-status-tag";
   } else {
-    facLobbyControls.style.display = "none";
-    facInGameControls.style.display = "flex";
-
-    const round = state.round;
-    const isRunning = round.status === "running";
-    const isCompleted = round.status === "completed";
-
-    if (isRunning) {
-      roundStatusText.textContent = `Rodada ${round.round_number} (${round.round_type.toUpperCase()} - Lote ${round.batch_size})`;
-      roundStatusText.className = "round-status-tag running";
-    } else if (isCompleted) {
-      roundStatusText.textContent = `Rodada ${round.round_number} Finalizada (${round.total_delivery_time}s)`;
-      roundStatusText.className = "round-status-tag";
-    } else {
-      roundStatusText.textContent = "Aguardando Início da Rodada";
-      roundStatusText.className = "round-status-tag";
-    }
-
-    btnStartWaterfall.disabled = isRunning;
-    btnStartKanban.disabled = isRunning;
-    btnCustomRound.disabled = isRunning;
+    roundStatusText.textContent = "Partida Ativa • Aguardando Disparo de Rodada";
+    roundStatusText.className = "round-status-tag";
   }
+
+  btnStartWaterfall.disabled = isRunning;
+  btnStartKanban.disabled = isRunning;
+  btnCustomRound.disabled = isRunning;
 }
 
 // --- Pipeline Kanban Global ---
@@ -568,7 +603,7 @@ function renderPipelineBoard(state) {
 
       <div class="col-player-assigned">
         <span class="dot ${st.is_online ? "" : "offline"}"></span>
-        <span>${st.assigned_player_name || (state.room_phase === "lobby" ? "Aguardando início" : "Vaga aberta")}</span>
+        <span>${st.assigned_player_name || (state.room_phase === "lobby" ? "Aguardando alocação" : "Vaga aberta")}</span>
       </div>
 
       <div class="col-batches-container">
@@ -629,38 +664,43 @@ function renderStationBatchChips(batches) {
   }).join("");
 }
 
-// --- Renderização da Área Principal (Lobby vs Em Jogo) ---
+// --- Renderização da Área de Conteúdo Principal ---
 function renderMainContent(state) {
   const isLobby = state.room_phase === "lobby";
   const myPlayer = state.players.find(p => p.id === myPlayerId);
   const isFacilitator = myPlayer ? myPlayer.is_facilitator : false;
 
-  // CASO 1: SALA DE ESPERA (LOBBY)
-  if (isLobby) {
-    waitingRoomCard.style.display = isFacilitator ? "none" : "flex";
-    facilitatorDashboardCard.style.display = isFacilitator ? "flex" : "none";
-    playerWorkspace.style.display = "none";
+  if (isFacilitator) {
+    // FACILITADOR: Vê sempre o Centro de Comando com a Tabela de Alocação
+    waitingRoomCard.style.display = "none";
+    facilitatorDashboardCard.style.display = "flex";
 
-    renderWaitingRoomRoster(state);
+    if (soloOverride) {
+      playerWorkspace.style.display = "flex";
+      renderMyStationsWorkspace(state, myPlayer, true);
+    } else {
+      playerWorkspace.style.display = "none";
+    }
+
+    renderFacilitatorAllocationTable(state);
     return;
   }
 
-  // CASO 2: EM JOGO (PARTIDA INICIADA)
-  waitingRoomCard.style.display = "none";
+  // JOGADOR CONVIDADO:
+  facilitatorDashboardCard.style.display = "none";
 
-  if (isFacilitator && !soloOverride) {
-    // Facilitador sem modo solo: vê dashboard de comando
-    facilitatorDashboardCard.style.display = "flex";
+  if (isLobby) {
+    waitingRoomCard.style.display = "flex";
     playerWorkspace.style.display = "none";
+    renderWaitingRoomRoster(state);
   } else {
-    // Jogador comum (ou facilitador em modo solo/teste): vê suas estações
-    facilitatorDashboardCard.style.display = "none";
+    waitingRoomCard.style.display = "none";
     playerWorkspace.style.display = "flex";
-    renderMyStationsWorkspace(state, myPlayer, isFacilitator);
+    renderMyStationsWorkspace(state, myPlayer, false);
   }
 }
 
-// Renderiza a lista de avatares na Sala de Espera
+// --- Renderização da Sala de Espera dos Jogadores ---
 function renderWaitingRoomRoster(state) {
   if (!lobbyPlayersRoster) return;
   lobbyPlayersRoster.innerHTML = "";
@@ -680,17 +720,207 @@ function renderWaitingRoomRoster(state) {
   });
 }
 
-// Renderiza a Área de Trabalho Multi-Estação do Jogador
-function renderMyStationsWorkspace(state, myPlayer, isFacilitator) {
+// =========================================================================
+// PAINEL DE ALOCAÇÃO DINÂMICA DO FACILITADOR (COM CHECKBOXES REAIS E1..E5)
+// =========================================================================
+function renderFacilitatorAllocationTable(state) {
+  if (!allocationTableBody) return;
+  allocationTableBody.innerHTML = "";
+
+  // Jogadores elegíveis para receber estações:
+  // Se houver convidados, lista os convidados. Se estiver só o host, lista o próprio host.
+  const guests = state.players.filter(p => p.online && !p.is_facilitator);
+  const eligiblePlayers = guests.length > 0 ? guests : state.players.filter(p => p.online);
+
+  if (eligiblePlayers.length === 0) {
+    emptyAllocationMsg.style.display = "block";
+    btnValidateAndStart.disabled = true;
+    updateAllocationCoverageUI();
+    return;
+  }
+
+  emptyAllocationMsg.style.display = "none";
+
+  // Se o mapa local estiver vazio para esses jogadores, inicializa com a sugestão equitativa
+  const allEmpty = eligiblePlayers.every(p => !localAllocationMap[p.id] || localAllocationMap[p.id].length === 0);
+  if (allEmpty) {
+    calculateEquitableAllocation(eligiblePlayers);
+  }
+
+  eligiblePlayers.forEach(p => {
+    const tr = document.createElement("tr");
+    const assignedStations = localAllocationMap[p.id] || [];
+
+    let checkboxesHTML = "";
+    for (let st = 1; st <= 5; st++) {
+      const isChecked = assignedStations.includes(st);
+      checkboxesHTML += `
+        <td class="td-checkbox-cell">
+          <input 
+            type="checkbox" 
+            class="st-checkbox" 
+            data-player-id="${p.id}" 
+            data-station-id="${st}" 
+            ${isChecked ? "checked" : ""}
+            title="Atribuir Estação ${st} a ${p.name}" 
+          />
+        </td>
+      `;
+    }
+
+    tr.innerHTML = `
+      <td>
+        <div class="td-player-cell">
+          <span>${p.is_facilitator ? "👑" : "👤"}</span>
+          <strong>${p.name}</strong>
+          ${p.is_facilitator ? '<span class="role-tag">Host</span>' : ""}
+        </div>
+      </td>
+      ${checkboxesHTML}
+      <td class="td-total-cell" id="total-badge-${p.id}">
+        ${assignedStations.length} etapa${assignedStations.length === 1 ? "" : "s"}
+      </td>
+    `;
+
+    allocationTableBody.appendChild(tr);
+  });
+
+  // Anexa os listeners de alteração nos checkboxes
+  const checkboxes = allocationTableBody.querySelectorAll(".st-checkbox");
+  checkboxes.forEach(cb => {
+    cb.addEventListener("change", (e) => {
+      const pid = e.target.getAttribute("data-player-id");
+      const st = parseInt(e.target.getAttribute("data-station-id"));
+      const isChecked = e.target.checked;
+
+      if (!localAllocationMap[pid]) {
+        localAllocationMap[pid] = [];
+      }
+
+      if (isChecked) {
+        if (!localAllocationMap[pid].includes(st)) {
+          localAllocationMap[pid].push(st);
+          localAllocationMap[pid].sort((a, b) => a - b);
+        }
+      } else {
+        localAllocationMap[pid] = localAllocationMap[pid].filter(s => s !== st);
+      }
+
+      // Atualiza badge de total deste jogador
+      const totalBadge = document.getElementById(`total-badge-${pid}`);
+      if (totalBadge) {
+        const count = localAllocationMap[pid].length;
+        totalBadge.textContent = `${count} etapa${count === 1 ? "" : "s"}`;
+      }
+
+      updateAllocationCoverageUI();
+    });
+  });
+
+  updateAllocationCoverageUI();
+}
+
+// Auto-distribuição equitativa das 5 etapas entre os jogadores
+function autoDistributeEquitably() {
+  if (!currentRoomState) return;
+  const guests = currentRoomState.players.filter(p => p.online && !p.is_facilitator);
+  const eligiblePlayers = guests.length > 0 ? guests : currentRoomState.players.filter(p => p.online);
+
+  calculateEquitableAllocation(eligiblePlayers);
+  renderFacilitatorAllocationTable(currentRoomState);
+  showToast("⚡ 5 etapas distribuídas equitativamente entre os jogadores!", 2500);
+}
+
+function calculateEquitableAllocation(players) {
+  localAllocationMap = {};
+  const count = players.length;
+  if (count === 0) return;
+
+  let distributionPlan = [];
+  if (count === 1) {
+    distributionPlan = [[1, 2, 3, 4, 5]];
+  } else if (count === 2) {
+    distributionPlan = [[1, 2, 3], [4, 5]];
+  } else if (count === 3) {
+    distributionPlan = [[1, 2], [3], [4, 5]];
+  } else if (count === 4) {
+    distributionPlan = [[1, 2], [3], [4], [5]];
+  } else {
+    distributionPlan = [[1], [2], [3], [4], [5]];
+  }
+
+  players.forEach((p, idx) => {
+    localAllocationMap[p.id] = distributionPlan[idx] || [];
+  });
+}
+
+// Atualiza o indicador de validação e cobertura das 5 estações
+function updateAllocationCoverageUI() {
+  if (!allocationCoverageBadge) return;
+
+  // Coleta todas as estações atribuídas
+  const assignedStationsSet = new Set();
+  Object.values(localAllocationMap).forEach(stList => {
+    stList.forEach(s => assignedStationsSet.add(s));
+  });
+
+  const missing = [];
+  for (let s = 1; s <= 5; s++) {
+    if (!assignedStationsSet.has(s)) missing.push(`E${s}`);
+  }
+
+  const isComplete = missing.length === 0;
+
+  if (isComplete) {
+    allocationCoverageBadge.innerHTML = `
+      <span class="coverage-pill complete">✓ Todas as 5 etapas cobertas (E1, E2, E3, E4, E5)</span>
+    `;
+    btnValidateAndStart.disabled = false;
+    btnValidateAndStart.innerHTML = `<span>🚀 Validar Alocação e Iniciar Jogo</span>`;
+  } else {
+    allocationCoverageBadge.innerHTML = `
+      <span class="coverage-pill incomplete">⚠️ Etapas sem operador: ${missing.join(", ")}</span>
+    `;
+    btnValidateAndStart.disabled = false; // permite clicar para ver o alerta específico
+    btnValidateAndStart.innerHTML = `<span>⚠️ Validar Alocação (${missing.length} etapa${missing.length === 1 ? "" : "s"} pendente${missing.length === 1 ? "" : "s"})</span>`;
+  }
+}
+
+// Valida a alocação e dispara o início da partida
+function validateAndStartGame() {
+  const assignedStationsSet = new Set();
+  Object.values(localAllocationMap).forEach(stList => {
+    stList.forEach(s => assignedStationsSet.add(s));
+  });
+
+  const missing = [];
+  for (let s = 1; s <= 5; s++) {
+    if (!assignedStationsSet.has(s)) missing.push(`E${s}`);
+  }
+
+  if (missing.length > 0) {
+    alert(`Atenção: Todas as 5 etapas precisam ter pelo menos um operador responsável!\n\nEtapas não atribuídas: ${missing.join(", ")}.\nPor favor, marque as caixas correspondentes antes de iniciar.`);
+    return;
+  }
+
+  sendWsMessage({
+    action: "SET_CUSTOM_ALLOCATION",
+    allocations: localAllocationMap,
+    start_game: true
+  });
+}
+
+// =========================================================================
+// ÁREA DE TRABALHO MULTI-ESTAÇÃO DO JOGADOR
+// =========================================================================
+function renderMyStationsWorkspace(state, myPlayer, isFacilitatorSolo) {
   if (!myStationsGrid) return;
   myStationsGrid.innerHTML = "";
 
-  // Determina quais estações este jogador opera
   let stationsToRender = [];
-  if (soloOverride) {
-    // Em modo solo: renderiza todas as 5 estações para teste completo
+  if (isFacilitatorSolo || soloOverride) {
     stationsToRender = state.stations;
-    myStationsSubtitle.textContent = "[Modo Solo Ativo] Você tem controle sobre todas as 5 etapas da simulação.";
+    myStationsSubtitle.textContent = "[Modo Solo Ativo] Você pode operar todas as 5 etapas da simulação nesta tela.";
   } else {
     const assignedIds = myPlayer ? (myPlayer.stations || []) : [];
     stationsToRender = state.stations.filter(s => assignedIds.includes(s.id));
@@ -705,13 +935,12 @@ function renderMyStationsWorkspace(state, myPlayer, isFacilitator) {
     myStationsGrid.innerHTML = `
       <div style="grid-column: 1 / -1; text-align: center; padding: 40px; color: var(--text-dim);">
         <h4>Nenhuma estação atribuída a você no momento.</h4>
-        <p>Você pode acompanhar o fluxo no Pipeline geral acima como observador.</p>
+        <p>Acompanhe o fluxo no Pipeline geral acima como observador.</p>
       </div>
     `;
     return;
   }
 
-  // Gera o painel de trabalho de cada estação atribuída
   stationsToRender.forEach(st => {
     const panel = createStationPanelElement(st, state);
     myStationsGrid.appendChild(panel);
@@ -770,7 +999,6 @@ function createStationPanelElement(st, state) {
     </div>
   `;
 
-  // Adiciona listeners para as moedas não processadas deste lote
   if (activeBatch) {
     activeBatch.coins.forEach((coin, idx) => {
       if (!coin.processed) {
@@ -790,7 +1018,6 @@ function createStationPanelElement(st, state) {
       }
     });
 
-    // Listener do botão de envio
     const btnDispatch = panel.querySelector(".btn-panel-dispatch");
     if (btnDispatch && activeBatch.is_ready_to_send) {
       btnDispatch.addEventListener("click", () => {

@@ -104,30 +104,16 @@
     <div id="toastBanner" class="toast-banner"></div>
 
     <!-- =========================================================================
-         PAINEL DO FACILITADOR (VISÍVEL APENAS PARA O FACILITADOR)
+         BARRA SUPERIOR DO FACILITADOR (CONTROLES GERAIS E DE RODADA)
          ========================================================================= -->
     <section class="facilitator-bar" id="facilitatorBar" style="display: none;">
-      <!-- Modo A: Quando está no Lobby de Espera -->
-      <div class="fac-lobby-controls" id="facLobbyControls">
+      <div class="fac-bar-inner">
         <div class="bar-title">
           <span class="badge-role">👑 Painel do Facilitador</span>
-          <span class="round-status-tag" id="facLobbyStatusText">Aguardando jogadores entrarem... (0 conectados)</span>
-        </div>
-        <div class="fac-actions">
-          <button id="btnMasterStartGame" class="btn btn-master-start">
-            <span>🚀 Iniciar Partida (Alocar Estações e Começar)</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Modo B: Quando está Em Jogo -->
-      <div class="fac-ingame-controls" id="facInGameControls" style="display: none;">
-        <div class="bar-title">
-          <span class="badge-role">👑 Facilitador</span>
-          <span id="roundStatusText" class="round-status-tag">Em Andamento</span>
+          <span id="roundStatusText" class="round-status-tag">Aguardando Início</span>
         </div>
 
-        <div class="round-controls">
+        <div class="round-controls" id="facRoundControls">
           <button id="btnStartWaterfall" class="btn btn-cascade" title="Lote de 10 moedas">
             <span>🌊 Rodada 1: Cascata (Lote 10)</span>
           </button>
@@ -186,8 +172,7 @@
 
         <h2 id="waitingRoomTitle">Aguardando o facilitador iniciar a partida...</h2>
         <p class="waiting-room-subtitle" id="waitingRoomSubtitle">
-          Você está na Sala de Espera. Assim que o facilitador iniciar a partida, as 5 etapas do projeto
-          serão distribuídas automaticamente entre os jogadores conectados.
+          Você está na Sala de Espera. O Facilitador está distribuindo as 5 etapas do projeto e iniciará o jogo em instantes.
         </p>
 
         <div class="lobby-roster-box">
@@ -201,38 +186,74 @@
         </div>
 
         <div class="waiting-tip">
-          <span>💡 <strong>Como funciona a alocação:</strong> Se houver 5 jogadores, cada um receberá 1 estação. Se houver menos, as 5 etapas serão divididas automaticamente entre os disponíveis!</span>
+          <span>💡 <strong>Regra do Lote Fechado:</strong> Quando o jogo começar, clique em 100% das moedas do seu lote para liberar o envio para a próxima etapa!</span>
         </div>
       </div>
 
-      <!-- 2. WORKSPACE DO FACILITADOR (QUANDO EM JOGO) -->
+      <!-- 2. CENTRO DE COMANDO DO FACILITADOR: PAINEL DE ALOCAÇÃO DINÂMICA (CHECKBOXES E1..E5) -->
       <div id="facilitatorDashboardCard" class="facilitator-dashboard-card" style="display: none;">
         <div class="fac-dash-header">
           <div class="fac-dash-title">
-            <span class="dash-icon">📊</span>
+            <span class="dash-icon">🎛️</span>
             <div>
-              <h3>Centro de Comando do Facilitador</h3>
-              <p>Você é o host da simulação. Acompanhe o fluxo no Pipeline acima e oriente o time através das rodadas.</p>
+              <h3>Centro de Comando do Facilitador — Alocação de Estações</h3>
+              <p>Marque os checkboxes para definir quais etapas do projeto cada jogador vai operar:</p>
             </div>
           </div>
-          <div class="fac-dash-stats" id="facDashStats">
-            <!-- Resumo dinâmico -->
+          <div class="fac-dash-actions">
+            <button id="btnAutoAllocate" class="btn btn-secondary btn-sm" title="Distribui as 5 estações equitativamente entre os jogadores conectados">
+              <span>⚡ Auto-Distribuir Equitativamente</span>
+            </button>
           </div>
         </div>
 
-        <div class="fac-guide-grid">
-          <div class="guide-card">
-            <h4>1️⃣ Rodada 1: Cascata (Lote 10)</h4>
-            <p>Demonstra o modelo tradicional. Lotes grandes forçam as estações seguintes a ficarem ociosas e atrasam drasticamente a 1ª entrega.</p>
+        <!-- Tabela Dinâmica de Alocação com Checkboxes E1..E5 -->
+        <div class="allocation-table-wrapper">
+          <table class="allocation-table" id="allocationTable">
+            <thead>
+              <tr>
+                <th class="th-player">Jogador Conectado</th>
+                <th class="th-station th-e1" title="Estação 1: Levantamento e Análise">
+                  <span class="th-chip">📋 E1</span>
+                  <small>Levantamento</small>
+                </th>
+                <th class="th-station th-e2" title="Estação 2: Modelagem Relacional">
+                  <span class="th-chip">🗄️ E2</span>
+                  <small>Modelagem</small>
+                </th>
+                <th class="th-station th-e3" title="Estação 3: Desenvolvimento da Migração">
+                  <span class="th-chip">💻 E3</span>
+                  <small>Migração</small>
+                </th>
+                <th class="th-station th-e4" title="Estação 4: Aplicação e Testes">
+                  <span class="th-chip">🧪 E4</span>
+                  <small>Testes</small>
+                </th>
+                <th class="th-station th-e5" title="Estação 5: Homologação e Produção">
+                  <span class="th-chip">🚀 E5</span>
+                  <small>Produção</small>
+                </th>
+                <th class="th-total">Total</th>
+              </tr>
+            </thead>
+            <tbody id="allocationTableBody">
+              <!-- Linhas com checkboxes reais renderizadas dinamicamente via JS -->
+            </tbody>
+          </table>
+
+          <div id="emptyAllocationMsg" class="empty-allocation-box" style="display: none;">
+            <span>⏳ Nenhum jogador convidado conectado ainda. Compartilhe o link da sala acima!</span>
           </div>
-          <div class="guide-card highlight">
-            <h4>2️⃣ Rodada 2: Kanban (Lote 2)</h4>
-            <p>Demonstra o fluxo contínuo. Lotes pequenos geram paralelismo imediato, entrega contínua de valor e WIP reduzido.</p>
+        </div>
+
+        <!-- Rodapé do Painel de Alocação com Validação e Botão Grande de Iniciar -->
+        <div class="allocation-footer">
+          <div class="allocation-coverage" id="allocationCoverageBadge">
+            <!-- Indicador visual de cobertura das 5 estações -->
           </div>
-          <div class="guide-card">
-            <h4>3️⃣ Análise Comparativa</h4>
-            <p>Abra o botão <strong>"📊 Comparativo"</strong> após as rodadas para exibir o gráfico e os dados de Lead Time para a equipe.</p>
-          </div>
+          <button id="btnValidateAndStart" class="btn btn-master-start btn-lg">
+            <span>🚀 Validar Alocação e Iniciar Jogo</span>
+          </button>
         </div>
       </div>
 
@@ -274,8 +295,8 @@
         <h4>Regra de Ouro (Regra do Lote Fechado)</h4>
         <p>Você <strong>NÃO</strong> pode enviar moedas individualmente se elas pertencem a um lote fechado. O botão de envio só é habilitado quando <strong>100% das moedas do lote atual forem processadas</strong> na sua estação!</p>
 
-        <h4>Alocação Dinâmica de Estações</h4>
-        <p>Se a sala tiver menos de 5 jogadores, o sistema divide as 5 etapas entre os participantes. Sua tela exibirá quadros para cada etapa sob sua responsabilidade.</p>
+        <h4>Alocação de Estações</h4>
+        <p>O Facilitador aloca as estações para cada jogador usando as caixas de seleção. Se você receber 2 ou mais estações, sua tela exibirá os quadros de todas elas simultaneamente.</p>
 
         <h4>As Duas Rodadas</h4>
         <div class="concept-cards">

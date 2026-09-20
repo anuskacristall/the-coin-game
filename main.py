@@ -537,6 +537,40 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                         "message": "Apenas o Facilitador pode iniciar a partida."
                     }))
 
+            elif action == "SET_CUSTOM_ALLOCATION":
+                player = room.players.get(current_player_id)
+                if player and player.get("is_facilitator", False):
+                    allocations = data.get("allocations", {})  # dict: pid -> [1, 2]
+                    for p in room.players.values():
+                        p["stations"] = []
+                    for s in room.station_assignments:
+                        room.station_assignments[s] = None
+
+                    for pid, st_list in allocations.items():
+                        if pid in room.players:
+                            valid_st = [int(s) for s in st_list if 1 <= int(s) <= 5]
+                            room.players[pid]["stations"] = valid_st
+                            for s in valid_st:
+                                room.station_assignments[s] = pid
+
+                    should_start = bool(data.get("start_game", True))
+                    if should_start:
+                        room.room_phase = "in_game"
+                        if room.round_status != "running":
+                            room.start_round(round_type="waterfall", batch_size=10, total_coins=20)
+                        await broadcast_room(room, "GAME_STARTED", {
+                            "notification": "🚀 Partida iniciada com a alocação validada pelo Facilitador!"
+                        })
+                    else:
+                        await broadcast_room(room, "ROOM_STATE", {
+                            "notification": "Alocação das estações atualizada pelo Facilitador."
+                        })
+                else:
+                    await websocket.send_text(json.dumps({
+                        "type": "ERROR_MSG",
+                        "message": "Apenas o Facilitador pode configurar a alocação."
+                    }))
+
             elif action == "RETURN_TO_LOBBY":
                 player = room.players.get(current_player_id)
                 if player and player.get("is_facilitator", False):
