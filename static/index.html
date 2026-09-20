@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Coin Game — Simulador Kanban em Tempo Real</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <!-- Tela Inicial: Criação / Entrada na Sala -->
+  <div id="lobbyScreen" class="screen active">
+    <div class="lobby-card">
+      <div class="game-logo">
+        <div class="logo-coin">🪙</div>
+        <h1>The Coin Game</h1>
+        <span class="badge-subtitle">Simulador Kanban & Batch Size</span>
+      </div>
+      <p class="lobby-description">
+        Experimente na prática a diferença dramática entre a abordagem em 
+        <strong>Cascata (Lotes Grandes)</strong> e o <strong>Fluxo Contínuo Kanban (Lotes Pequenos)</strong>.
+      </p>
+
+      <div class="lobby-form">
+        <div class="input-group">
+          <label for="inputPlayerName">Seu Nome / Apelido</label>
+          <input type="text" id="inputPlayerName" placeholder="Ex: Ana Silva" maxlength="20" autofocus />
+        </div>
+
+        <div class="input-group">
+          <label for="inputRoomCode">Código da Sala (para entrar)</label>
+          <input type="text" id="inputRoomCode" placeholder="Ex: KANBAN" style="text-transform: uppercase;" />
+        </div>
+
+        <div class="lobby-actions">
+          <button id="btnCreateRoom" class="btn btn-primary btn-lg">
+            <span>✨ Criar Nova Sala</span>
+          </button>
+          <button id="btnJoinRoom" class="btn btn-secondary btn-lg">
+            <span>🚀 Entrar na Sala</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="lobby-footer">
+        <span>Simulação multiplayer em tempo real baseada no clássico Agile Coin Game</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tela Principal do Jogo -->
+  <div id="gameScreen" class="screen">
+    <!-- Barra Superior / Header -->
+    <header class="top-nav">
+      <div class="nav-left">
+        <div class="nav-logo">🪙 The Coin Game</div>
+        <div class="room-pill" id="roomCodeDisplay" title="Clique para copiar link da sala">
+          <span>Sala:</span> <strong id="currentRoomCode">---</strong>
+          <button class="btn-icon" id="btnCopyLink" title="Copiar link de convite">📋</button>
+        </div>
+        <div class="connection-status online" id="connectionStatus">Conectado</div>
+      </div>
+
+      <div class="nav-center">
+        <!-- Cronômetro e Métricas Chave -->
+        <div class="metric-chip live-timer">
+          <span class="chip-label">⏱️ Cronômetro</span>
+          <span class="chip-value" id="metricTimer">00:00.0</span>
+        </div>
+
+        <div class="metric-chip highlight-chip">
+          <span class="chip-label">⭐ 1ª Entrega (Lead Time)</span>
+          <span class="chip-value" id="metricFirstDelivery">--</span>
+        </div>
+
+        <div class="metric-chip">
+          <span class="chip-label">📦 Tamanho do Lote</span>
+          <span class="chip-value" id="metricBatchSize">--</span>
+        </div>
+
+        <div class="metric-chip">
+          <span class="chip-label">🏁 Concluído</span>
+          <span class="chip-value" id="metricCompletedCoins">0 / 0</span>
+        </div>
+      </div>
+
+      <div class="nav-right">
+        <button id="btnSoundToggle" class="btn-icon-round" title="Alternar Efeitos Sonoros">🔊</button>
+        <button id="btnHelpModal" class="btn btn-ghost btn-sm">❓ Como Funciona</button>
+        <button id="btnHistoryModal" class="btn btn-ghost btn-sm">📊 Comparativo</button>
+        <div class="user-profile">
+          <span class="avatar-circle" id="userAvatar">👤</span>
+          <span class="user-name" id="displayPlayerName">Jogador</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Notificação Flutuante / Toast Banner -->
+    <div id="toastBanner" class="toast-banner"></div>
+
+    <!-- Painel do Facilitador (Controles de Rodada) -->
+    <section class="facilitator-bar" id="facilitatorBar">
+      <div class="bar-title">
+        <span class="badge-role">Painel do Facilitador</span>
+        <span id="roundStatusText" class="round-status-tag">Aguardando Início</span>
+      </div>
+
+      <div class="round-controls">
+        <button id="btnStartWaterfall" class="btn btn-cascade" title="Lote de 10 moedas">
+          <span>🌊 Rodada 1: Cascata (Lote 10)</span>
+        </button>
+
+        <button id="btnStartKanban" class="btn btn-kanban" title="Lote de 2 moedas">
+          <span>⚡ Rodada 2: Kanban (Lote 2)</span>
+        </button>
+
+        <button id="btnCustomRound" class="btn btn-outline-light">
+          <span>⚙️ Customizar...</span>
+        </button>
+
+        <button id="btnResetRound" class="btn btn-danger-soft" title="Reiniciar rodada atual">
+          <span>🔄 Reiniciar</span>
+        </button>
+
+        <!-- Toggle Modo Solo / Teste -->
+        <label class="toggle-switch" title="Permite clicar e testar qualquer estação sem precisar de 5 navegadores">
+          <input type="checkbox" id="checkSoloOverride" />
+          <span class="slider"></span>
+          <span class="toggle-text">Modo Solo / Teste</span>
+        </label>
+      </div>
+    </section>
+
+    <!-- Pipeline Global / Visão Kanban (Mostra as 5 Estações + Concluído) -->
+    <section class="pipeline-section">
+      <div class="section-heading">
+        <h2>Fluxo de Valor do Projeto (Pipeline Kanban)</h2>
+        <span class="hint">Acompanhe a movimentação dos lotes e os gargalos de WIP em tempo real</span>
+      </div>
+
+      <div class="pipeline-board" id="pipelineBoard">
+        <!-- Colunas geradas dinamicamente via JS (Estações 1 a 5 + Concluído) -->
+      </div>
+    </section>
+
+    <!-- Área de Trabalho do Jogador (A Minha Estação) -->
+    <main class="station-workspace" id="stationWorkspace">
+      <!-- Caso o jogador AINDA NÃO tenha escolhido uma estação -->
+      <div id="noStationCard" class="workspace-empty-card">
+        <h3>Escolha sua Estação para Jogar</h3>
+        <p>Cada jogador é responsável por uma etapa do ciclo de entrega. Escolha uma das estações livres abaixo:</p>
+        <div class="station-picker-grid" id="stationPickerGrid">
+          <!-- Gerado via JS com os cards das estações -->
+        </div>
+      </div>
+
+      <!-- Caso o jogador ESTEJA em uma estação ativa -->
+      <div id="activeStationCard" class="workspace-active-card" style="display: none;">
+        <div class="station-header">
+          <div class="st-left">
+            <span class="st-badge-icon" id="myStationIcon">📋</span>
+            <div>
+              <h2 id="myStationTitle">Estação 1: Levantamento e Análise</h2>
+              <span class="st-role-desc" id="myStationDesc">Você é o responsável por esta etapa.</span>
+            </div>
+          </div>
+
+          <div class="st-right">
+            <button id="btnLeaveStation" class="btn btn-outline-light btn-sm">Trocar de Estação</button>
+          </div>
+        </div>
+
+        <!-- Fila de Lotes e Status da Estação -->
+        <div class="station-body">
+          <div class="queue-info-strip">
+            <div class="queue-stat">
+              <span class="stat-label">Lotes Aguardando:</span>
+              <strong id="myQueueCount">0</strong>
+            </div>
+            <div class="queue-stat">
+              <span class="stat-label">Lote em Processamento:</span>
+              <strong id="myActiveBatchNumber">Nenhum</strong>
+            </div>
+            <div class="queue-stat">
+              <span class="stat-label">Progresso do Lote:</span>
+              <strong id="myBatchProgressText">0 / 0</strong>
+            </div>
+          </div>
+
+          <!-- Barra de Progresso Visual do Lote -->
+          <div class="progress-bar-container">
+            <div class="progress-bar-fill" id="myBatchProgressBar" style="width: 0%;"></div>
+          </div>
+
+          <!-- Área Central das Moedas / Tarefas -->
+          <div class="coins-arena" id="coinsArena">
+            <!-- Moedas renderizadas via JS -->
+            <div class="arena-empty-state" id="arenaEmptyState">
+              <div class="empty-icon">⏳</div>
+              <h4>Nenhum lote nesta estação no momento</h4>
+              <p>Aguardando lote enviado pela estação anterior...</p>
+            </div>
+          </div>
+
+          <!-- Ação Principal: Enviar Lote (Regra do Lote Fechado) -->
+          <div class="dispatch-action-area">
+            <div class="batch-rule-banner" id="batchRuleBanner">
+              <span class="lock-icon">🔒</span>
+              <span id="batchRuleText">Regra do Lote Fechado: Clique em 100% das moedas para liberar o envio.</span>
+            </div>
+
+            <button id="btnDispatchBatch" class="btn btn-dispatch" disabled>
+              <span id="btnDispatchText">Enviar Lote para a Próxima Estação ➔</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Modal: Como Funciona & Conceitos Lean/Kanban -->
+  <div id="modalHelp" class="modal-overlay">
+    <div class="modal-window">
+      <div class="modal-header">
+        <h3>🪙 Como Funciona o The Coin Game</h3>
+        <button class="modal-close" id="btnCloseHelp">&times;</button>
+      </div>
+      <div class="modal-body">
+        <h4>O Desafio</h4>
+        <p>Simular a entrega de um projeto de migração de software através de 5 etapas consecutivas:</p>
+        <ol>
+          <li><strong>Levantamento e Análise</strong></li>
+          <li><strong>Modelagem Relacional</strong></li>
+          <li><strong>Desenvolvimento da Migração</strong></li>
+          <li><strong>Aplicação e Testes</strong></li>
+          <li><strong>Homologação e Produção (Entrega ao Cliente)</strong></li>
+        </ol>
+
+        <h4>Regra de Ouro (Regra do Lote Fechado)</h4>
+        <p>Você <strong>NÃO</strong> pode enviar moedas individualmente se elas pertencem a um lote maior. O botão de despacho só é liberado quando <strong>100% das moedas do lote atual forem processadas (clicadas)</strong> por você!</p>
+
+        <h4>A Comparação das Rodadas</h4>
+        <div class="concept-cards">
+          <div class="concept-card cascade">
+            <h5>🌊 Rodada 1: Cascata (Lote 10)</h5>
+            <p>O trabalho é agrupado em lotes gigantes de 10 moedas. A Estação 1 precisa processar 10 antes de passar. As outras estações ficam ociosas esperando, e a 1ª entrega ao cliente demora muito!</p>
+          </div>
+          <div class="concept-card kanban">
+            <h5>⚡ Rodada 2: Kanban (Lote 2)</h5>
+            <p>Com lotes de 2 moedas, o trabalho é passado adiante rapidamente. Todas as estações trabalham em paralelo, a 1ª entrega acontece em tempo recorde e as filas (WIP) diminuem drasticamente!</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Histórico & Comparativo de Resultados -->
+  <div id="modalHistory" class="modal-overlay">
+    <div class="modal-window modal-lg">
+      <div class="modal-header">
+        <h3>📊 Quadro Comparativo de Rodadas</h3>
+        <button class="modal-close" id="btnCloseHistory">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>Veja os dados reais obtidos pela equipe nesta sessão de jogo:</p>
+        <div class="table-responsive">
+          <table class="history-table" id="historyTable">
+            <thead>
+              <tr>
+                <th>Rodada</th>
+                <th>Tipo</th>
+                <th>Tamanho do Lote</th>
+                <th>Total de Moedas</th>
+                <th>1ª Entrega (Lead Time)</th>
+                <th>Tempo Total</th>
+                <th>Hora</th>
+              </tr>
+            </thead>
+            <tbody id="historyTableBody">
+              <!-- Preenchido via JS -->
+            </tbody>
+          </table>
+        </div>
+        <div id="emptyHistoryMsg" class="empty-history">
+          Nenhuma rodada foi concluída ainda. Inicie e conclua a Rodada 1 e a Rodada 2 para comparar!
+        </div>
+
+        <div class="pedagogic-box" id="pedagogicBox" style="display: none;">
+          <h4>💡 Insight Pedagógico (Lean / Kanban)</h4>
+          <p id="pedagogicText"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Customizar Rodada -->
+  <div id="modalCustom" class="modal-overlay">
+    <div class="modal-window modal-sm">
+      <div class="modal-header">
+        <h3>⚙️ Customizar Rodada</h3>
+        <button class="modal-close" id="btnCloseCustom">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="input-group">
+          <label for="customBatchSize">Tamanho do Lote (Moedas por lote):</label>
+          <input type="number" id="customBatchSize" min="1" max="20" value="5" />
+        </div>
+        <div class="input-group">
+          <label for="customTotalCoins">Total de Moedas na Rodada:</label>
+          <input type="number" id="customTotalCoins" min="2" max="50" value="20" />
+        </div>
+        <button id="btnConfirmCustomRound" class="btn btn-primary btn-block">Iniciar Rodada Customizada</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/script.js"></script>
+</body>
+</html>
