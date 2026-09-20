@@ -1,6 +1,6 @@
 /**
  * The Coin Game — Simulador Kanban & Batch Size
- * Frontend Client (WebSockets, Auto-Scroll e Painel de Alocação por Checkboxes)
+ * Frontend Client (WebSockets, Auto-Scroll, Alocação Dinâmica e Perfil Híbrido Facilitador-Jogador)
  */
 
 // --- Estado Global do Cliente ---
@@ -11,6 +11,7 @@ let myPlayerName = localStorage.getItem("coin_game_player_name") || "";
 let currentRoomState = null;
 let soundEnabled = true;
 let soloOverride = false;
+let showAllocationInGame = false; // Controle de visibilidade da tabela de alocação durante o jogo
 let localTimerInterval = null;
 
 // Mapa de alocação local editável pelo Facilitador: { playerId: [1, 2, ...] }
@@ -48,6 +49,7 @@ const btnStartWaterfall = document.getElementById("btnStartWaterfall");
 const btnStartKanban = document.getElementById("btnStartKanban");
 const btnCustomRound = document.getElementById("btnCustomRound");
 const btnResetRound = document.getElementById("btnResetRound");
+const btnToggleAllocation = document.getElementById("btnToggleAllocation");
 const btnReturnToLobby = document.getElementById("btnReturnToLobby");
 const checkSoloOverride = document.getElementById("checkSoloOverride");
 
@@ -183,7 +185,7 @@ function initApp() {
 }
 
 function setupEventListeners() {
-  // Criar sala (Assume papel de Facilitador)
+  // Criar sala (Facilitador)
   btnCreateRoom.addEventListener("click", () => {
     const name = inputPlayerName.value.trim() || "Facilitador";
     savePlayerName(name);
@@ -234,6 +236,19 @@ function setupEventListeners() {
   btnValidateAndStart.addEventListener("click", () => {
     validateAndStartGame();
   });
+
+  // Facilitador: Mostrar/Ocultar Painel de Alocação durante o jogo
+  if (btnToggleAllocation) {
+    btnToggleAllocation.addEventListener("click", () => {
+      showAllocationInGame = !showAllocationInGame;
+      btnToggleAllocation.classList.toggle("btn-primary", showAllocationInGame);
+      btnToggleAllocation.classList.toggle("btn-outline-light", !showAllocationInGame);
+      renderMainContent(currentRoomState);
+      if (showAllocationInGame && facilitatorDashboardCard) {
+        facilitatorDashboardCard.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    });
+  }
 
   // Facilitador: Voltar ao Lobby
   btnReturnToLobby.addEventListener("click", () => {
@@ -342,7 +357,6 @@ function joinRoom(roomId, playerName) {
   connectWebSocket(currentRoomId, playerName);
 }
 
-// Oculta completamente o lobby inicial e rola suavemente para o painel relevante
 function transitionToGameScreen() {
   lobbyScreen.classList.remove("active");
   lobbyScreen.style.display = "none";
@@ -430,7 +444,7 @@ function handleServerMessage(msg) {
 
   if (msg.type === "GAME_STARTED") {
     soundFirstDelivery();
-    // Auto-scroll suave para a área de trabalho do jogador assim que o jogo inicia
+    // Auto-scroll suave para a área de trabalho assim que o jogo inicia
     setTimeout(() => {
       const wp = document.getElementById("playerWorkspace");
       if (wp && wp.style.display !== "none") {
@@ -477,11 +491,17 @@ function renderGameState(state) {
 
   // Atualiza crachá de perfil
   if (displayPlayerRole) {
-    displayPlayerRole.textContent = isFacilitator ? "👑 Facilitador" : "🕹️ Jogador";
-    displayPlayerRole.style.color = isFacilitator ? "#c4b5fd" : "#34d399";
+    const assignedCount = myPlayer && myPlayer.stations ? myPlayer.stations.length : 0;
+    if (isFacilitator) {
+      displayPlayerRole.textContent = assignedCount > 0 ? `👑 Facilitador & Operador (${assignedCount} etapa${assignedCount > 1 ? 's' : ''})` : "👑 Facilitador";
+      displayPlayerRole.style.color = "#c4b5fd";
+    } else {
+      displayPlayerRole.textContent = "🕹️ Jogador";
+      displayPlayerRole.style.color = "#34d399";
+    }
   }
 
-  // Sincroniza o mapa de alocação local a partir do servidor se ainda não foi editado
+  // Sincroniza o mapa de alocação local com o estado do servidor
   state.players.forEach(p => {
     if (!localAllocationMap[p.id] || localAllocationMap[p.id].length === 0) {
       localAllocationMap[p.id] = p.stations || [];
@@ -664,29 +684,53 @@ function renderStationBatchChips(batches) {
   }).join("");
 }
 
-// --- Renderização da Área de Conteúdo Principal ---
+// --- Renderização da Área de Conteúdo Principal (Interface Híbrida) ---
 function renderMainContent(state) {
   const isLobby = state.room_phase === "lobby";
   const myPlayer = state.players.find(p => p.id === myPlayerId);
   const isFacilitator = myPlayer ? myPlayer.is_facilitator : false;
 
+  // Verifica se o facilitador tem estações atribuídas a si mesmo (atuando de forma híbrida como jogador)
+  const myAssignedStations = myPlayer ? (myPlayer.stations || []) : [];
+  const facilitatorHasStations = isFacilitator && (myAssignedStations.length > 0 || soloOverride);
+
+  // ==========================================================
+  // CENÁRIO A: USUÁRIO É O FACILITADOR
+  // ==========================================================
   if (isFacilitator) {
-    // FACILITADOR: Vê sempre o Centro de Comando com a Tabela de Alocação
     waitingRoomCard.style.display = "none";
-    facilitatorDashboardCard.style.display = "flex";
 
-    if (soloOverride) {
-      playerWorkspace.style.display = "flex";
-      renderMyStationsWorkspace(state, myPlayer, true);
-    } else {
+    if (isLobby) {
+      // No Lobby: Facilitador vê a Tabela de Alocação para configurar quem opera o quê
+      facilitatorDashboardCard.style.display = "flex";
       playerWorkspace.style.display = "none";
-    }
+      renderFacilitatorAllocationTable(state);
+    } else {
+      // Em Jogo:
+      // Se o Facilitador assumiu estações (Perfil Híbrido Host + Jogador):
+      if (facilitatorHasStations) {
+        // Base da Tela: Renderiza a área de trabalho com as moedas da estação que ele assumiu!
+        playerWorkspace.style.display = "flex";
+        renderMyStationsWorkspace(state, myPlayer, soloOverride);
 
-    renderFacilitatorAllocationTable(state);
+        // A tabela de alocação pode ser alternada ou exibida quando solicitada pelo botão
+        facilitatorDashboardCard.style.display = showAllocationInGame ? "flex" : "none";
+        if (showAllocationInGame) {
+          renderFacilitatorAllocationTable(state);
+        }
+      } else {
+        // Facilitador sem estações (apenas administrador/observador):
+        facilitatorDashboardCard.style.display = "flex";
+        playerWorkspace.style.display = "none";
+        renderFacilitatorAllocationTable(state);
+      }
+    }
     return;
   }
 
-  // JOGADOR CONVIDADO:
+  // ==========================================================
+  // CENÁRIO B: USUÁRIO É JOGADOR CONVIDADO
+  // ==========================================================
   facilitatorDashboardCard.style.display = "none";
 
   if (isLobby) {
@@ -721,18 +765,16 @@ function renderWaitingRoomRoster(state) {
 }
 
 // =========================================================================
-// PAINEL DE ALOCAÇÃO DINÂMICA DO FACILITADOR (COM CHECKBOXES REAIS E1..E5)
+// PAINEL DE ALOCAÇÃO DINÂMICA DO FACILITADOR (COM FACILITADOR NA TABELA)
 // =========================================================================
 function renderFacilitatorAllocationTable(state) {
   if (!allocationTableBody) return;
   allocationTableBody.innerHTML = "";
 
-  // Jogadores elegíveis para receber estações:
-  // Se houver convidados, lista os convidados. Se estiver só o host, lista o próprio host.
-  const guests = state.players.filter(p => p.online && !p.is_facilitator);
-  const eligiblePlayers = guests.length > 0 ? guests : state.players.filter(p => p.online);
+  // LISTA TODOS OS JOGADORES ONLINE, SEMPRE INCLUINDO O FACILITADOR!
+  const onlinePlayers = state.players.filter(p => p.online);
 
-  if (eligiblePlayers.length === 0) {
+  if (onlinePlayers.length === 0) {
     emptyAllocationMsg.style.display = "block";
     btnValidateAndStart.disabled = true;
     updateAllocationCoverageUI();
@@ -741,15 +783,28 @@ function renderFacilitatorAllocationTable(state) {
 
   emptyAllocationMsg.style.display = "none";
 
-  // Se o mapa local estiver vazio para esses jogadores, inicializa com a sugestão equitativa
-  const allEmpty = eligiblePlayers.every(p => !localAllocationMap[p.id] || localAllocationMap[p.id].length === 0);
+  // Ordena para que o Facilitador apareça no topo da lista com destaque
+  const sortedPlayers = [...onlinePlayers].sort((a, b) => {
+    if (a.is_facilitator && !b.is_facilitator) return -1;
+    if (!a.is_facilitator && b.is_facilitator) return 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  // Se o mapa local estiver vazio para esses jogadores, inicializa a sugestão
+  const allEmpty = sortedPlayers.every(p => !localAllocationMap[p.id] || localAllocationMap[p.id].length === 0);
   if (allEmpty) {
-    calculateEquitableAllocation(eligiblePlayers);
+    calculateEquitableAllocation(sortedPlayers);
   }
 
-  eligiblePlayers.forEach(p => {
+  sortedPlayers.forEach(p => {
     const tr = document.createElement("tr");
+    const isFac = p.is_facilitator;
+    const isMe = p.id === myPlayerId;
     const assignedStations = localAllocationMap[p.id] || [];
+
+    if (isFac) {
+      tr.style.backgroundColor = "rgba(139, 92, 246, 0.08)";
+    }
 
     let checkboxesHTML = "";
     for (let st = 1; st <= 5; st++) {
@@ -771,9 +826,9 @@ function renderFacilitatorAllocationTable(state) {
     tr.innerHTML = `
       <td>
         <div class="td-player-cell">
-          <span>${p.is_facilitator ? "👑" : "👤"}</span>
+          <span>${isFac ? "👑" : "👤"}</span>
           <strong>${p.name}</strong>
-          ${p.is_facilitator ? '<span class="role-tag">Host</span>' : ""}
+          ${isFac ? `<span class="role-tag" style="background: rgba(139, 92, 246, 0.3); color: #c4b5fd;">Host${isMe ? " (Você)" : ""}</span>` : (isMe ? '<span class="role-tag">Você</span>' : '')}
         </div>
       </td>
       ${checkboxesHTML}
@@ -785,7 +840,7 @@ function renderFacilitatorAllocationTable(state) {
     allocationTableBody.appendChild(tr);
   });
 
-  // Anexa os listeners de alteração nos checkboxes
+  // Anexa listeners nos checkboxes
   const checkboxes = allocationTableBody.querySelectorAll(".st-checkbox");
   checkboxes.forEach(cb => {
     cb.addEventListener("change", (e) => {
@@ -806,7 +861,7 @@ function renderFacilitatorAllocationTable(state) {
         localAllocationMap[pid] = localAllocationMap[pid].filter(s => s !== st);
       }
 
-      // Atualiza badge de total deste jogador
+      // Atualiza badge de total
       const totalBadge = document.getElementById(`total-badge-${pid}`);
       if (totalBadge) {
         const count = localAllocationMap[pid].length;
@@ -820,15 +875,20 @@ function renderFacilitatorAllocationTable(state) {
   updateAllocationCoverageUI();
 }
 
-// Auto-distribuição equitativa das 5 etapas entre os jogadores
+// Auto-distribuição equitativa das 5 etapas entre todos os participantes (incluindo Facilitador)
 function autoDistributeEquitably() {
   if (!currentRoomState) return;
-  const guests = currentRoomState.players.filter(p => p.online && !p.is_facilitator);
-  const eligiblePlayers = guests.length > 0 ? guests : currentRoomState.players.filter(p => p.online);
+  const onlinePlayers = currentRoomState.players.filter(p => p.online);
 
-  calculateEquitableAllocation(eligiblePlayers);
+  const sorted = [...onlinePlayers].sort((a, b) => {
+    if (a.is_facilitator && !b.is_facilitator) return -1;
+    if (!a.is_facilitator && b.is_facilitator) return 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  calculateEquitableAllocation(sorted);
   renderFacilitatorAllocationTable(currentRoomState);
-  showToast("⚡ 5 etapas distribuídas equitativamente entre os jogadores!", 2500);
+  showToast("⚡ 5 etapas distribuídas equitativamente entre os participantes (incluindo você)!", 2500);
 }
 
 function calculateEquitableAllocation(players) {
@@ -858,7 +918,6 @@ function calculateEquitableAllocation(players) {
 function updateAllocationCoverageUI() {
   if (!allocationCoverageBadge) return;
 
-  // Coleta todas as estações atribuídas
   const assignedStationsSet = new Set();
   Object.values(localAllocationMap).forEach(stList => {
     stList.forEach(s => assignedStationsSet.add(s));
@@ -881,7 +940,7 @@ function updateAllocationCoverageUI() {
     allocationCoverageBadge.innerHTML = `
       <span class="coverage-pill incomplete">⚠️ Etapas sem operador: ${missing.join(", ")}</span>
     `;
-    btnValidateAndStart.disabled = false; // permite clicar para ver o alerta específico
+    btnValidateAndStart.disabled = false;
     btnValidateAndStart.innerHTML = `<span>⚠️ Validar Alocação (${missing.length} etapa${missing.length === 1 ? "" : "s"} pendente${missing.length === 1 ? "" : "s"})</span>`;
   }
 }
@@ -911,7 +970,7 @@ function validateAndStartGame() {
 }
 
 // =========================================================================
-// ÁREA DE TRABALHO MULTI-ESTAÇÃO DO JOGADOR
+// ÁREA DE TRABALHO MULTI-ESTAÇÃO DO JOGADOR (TAMBÉM USADA PELO FACILITADOR)
 // =========================================================================
 function renderMyStationsWorkspace(state, myPlayer, isFacilitatorSolo) {
   if (!myStationsGrid) return;

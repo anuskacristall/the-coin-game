@@ -150,22 +150,26 @@ class RoomState:
         if player_id in self.players:
             self.players[player_id]["online"] = False
 
-    def allocate_stations_dynamically(self) -> Dict[str, List[int]]:
+    def allocate_stations_dynamically(self, include_facilitator: bool = True) -> Dict[str, List[int]]:
         """
         Auto-balanceamento das 5 etapas entre os jogadores disponíveis.
-        O Facilitador não joga como trabalhador de estação (exceto se estiver 100% sozinho testando).
+        Se houver menos de 5 convidados e include_facilitator for True, o Facilitador
+        também recebe estações para completar o time de entrega de 5 etapas!
         """
-        # Jogadores ativos elegíveis (excluindo facilitador, se houver convidados)
-        candidates = [
-            p for p in self.players.values() 
-            if p.get("online", False) and not p.get("is_facilitator", False)
-        ]
+        online_players = [p for p in self.players.values() if p.get("online", False)]
+        facilitator = next((p for p in online_players if p.get("is_facilitator", False)), None)
+        guests = [p for p in online_players if not p.get("is_facilitator", False)]
 
-        # Se nenhum jogador comum entrou, permite alocar ao facilitador para modo demonstração solo
-        if len(candidates) == 0:
-            facilitator = self.players.get(self.creator_id)
-            if facilitator:
-                candidates = [facilitator]
+        # Se tiver 5 ou mais convidados, os convidados assumem as 5 etapas
+        if len(guests) >= 5:
+            candidates = guests
+        elif include_facilitator and facilitator:
+            # Facilitador atua de forma híbrida (host + jogador) para completar o time
+            candidates = [facilitator] + guests
+        elif len(guests) > 0:
+            candidates = guests
+        else:
+            candidates = [facilitator] if facilitator else []
 
         num_players = len(candidates)
         # Limpa atribuições anteriores
@@ -177,15 +181,7 @@ class RoomState:
         if num_players == 0:
             return {}
 
-        # Distribuição das 5 estações (1 a 5)
-        # Regras de balanceamento:
-        # 1 jogador: [1, 2, 3, 4, 5]
-        # 2 jogadores: [1, 2, 3], [4, 5]
-        # 3 jogadores: [1, 2], [3], [4, 5]
-        # 4 jogadores: [1, 2], [3], [4], [5]
-        # 5+ jogadores: 1 estação cada para os 5 primeiros
         distribution_plan: List[List[int]] = []
-
         if num_players == 1:
             distribution_plan = [[1, 2, 3, 4, 5]]
         elif num_players == 2:
