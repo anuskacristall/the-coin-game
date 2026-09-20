@@ -2,63 +2,54 @@ import json
 from fastapi.testclient import TestClient
 from main import app
 
-def test_websocket_flow():
+def test_websocket_lobby_and_start():
     client = TestClient(app)
-    room_code = "WSROOM"
+    room_code = "WSLOBBY"
 
-    with client.websocket_connect(f"/ws/{room_code}") as ws:
-        # 1. Join room
-        ws.send_text(json.dumps({
+    # Conectar Facilitador
+    with client.websocket_connect(f"/ws/{room_code}") as ws_fac:
+        ws_fac.send_text(json.dumps({
             "action": "JOIN_ROOM",
-            "playerName": "Alice Facilitadora",
-            "playerId": "p-alice"
+            "playerName": "Facilitador Boss",
+            "playerId": "p-fac"
         }))
-        
-        msg1 = json.loads(ws.receive_text())
-        assert msg1["type"] == "ROOM_STATE"
-        assert msg1["state"]["room_id"] == "WSROOM"
-        assert len(msg1["state"]["players"]) == 1
-        print("[PASS] WebSocket JOIN_ROOM confirmed")
+        msg_fac = json.loads(ws_fac.receive_text())
+        assert msg_fac["state"]["room_phase"] == "lobby"
+        assert msg_fac["state"]["players"][0]["is_facilitator"] is True
+        print("[PASS] Facilitator connected to lobby")
 
-        # 2. Claim Station 1
-        ws.send_text(json.dumps({
-            "action": "CLAIM_STATION",
-            "station_id": 1,
-            "playerId": "p-alice"
-        }))
-        msg2 = json.loads(ws.receive_text())
-        assert msg2["type"] == "ROOM_STATE"
-        station1 = next(s for s in msg2["state"]["stations"] if s["id"] == 1)
-        assert station1["assigned_player_id"] == "p-alice"
-        print("[PASS] WebSocket CLAIM_STATION confirmed")
+        # Conectar Jogador Convidado 1
+        with client.websocket_connect(f"/ws/{room_code}") as ws_guest:
+            ws_guest.send_text(json.dumps({
+                "action": "JOIN_ROOM",
+                "playerName": "Dev 1",
+                "playerId": "p-guest1"
+            }))
+            # ws_guest recebe seu ROOM_STATE inicial
+            msg_guest = json.loads(ws_guest.receive_text())
+            assert msg_guest["state"]["room_phase"] == "lobby"
 
-        # 3. Start Kanban round (batch_size 2, total_coins 4)
-        ws.send_text(json.dumps({
-            "action": "START_ROUND",
-            "round_type": "kanban",
-            "batch_size": 2,
-            "total_coins": 4,
-            "playerId": "p-alice"
-        }))
-        msg3 = json.loads(ws.receive_text())
-        assert msg3["type"] == "ROUND_STARTED"
-        assert msg3["state"]["round"]["status"] == "running"
-        assert msg3["state"]["round"]["batch_size"] == 2
-        print("[PASS] WebSocket START_ROUND confirmed (Kanban)")
+            # ws_fac também recebe o broadcast avisando que Dev 1 entrou
+            fac_notif = json.loads(ws_fac.receive_text())
+            assert "Dev 1" in fac_notif.get("notification", "")
+            print("[PASS] Guest 1 connected to lobby (and Facilitator notified)")
 
-        # 4. Process coin 0
-        batch1_id = msg3["state"]["stations"][0]["batches"][0]["batch_id"]
-        ws.send_text(json.dumps({
-            "action": "PROCESS_COIN",
-            "batch_id": batch1_id,
-            "coin_idx": 0,
-            "playerId": "p-alice"
-        }))
-        msg4 = json.loads(ws.receive_text())
-        assert msg4["type"] == "COIN_PROCESSED"
-        print("[PASS] WebSocket PROCESS_COIN confirmed")
+            # Facilitador clica em "Iniciar Partida" (START_GAME)
+            ws_fac.send_text(json.dumps({
+                "action": "START_GAME",
+                "playerId": "p-fac"
+            }))
 
-    print("\nALL WEBSOCKET TESTS PASSED!")
+            msg_start = json.loads(ws_fac.receive_text())
+            assert msg_start["type"] == "GAME_STARTED"
+            assert msg_start["state"]["room_phase"] == "in_game"
+            
+            # Como só tem 1 convidado, ele recebe as 5 estações
+            guest_player = next(p for p in msg_start["state"]["players"] if p["id"] == "p-guest1")
+            assert guest_player["stations"] == [1, 2, 3, 4, 5]
+            print("[PASS] Facilitator START_GAME dynamically allocated 5 stations to Guest 1")
+
+    print("\nALL WEBSOCKET LOBBY TESTS PASSED!")
 
 if __name__ == "__main__":
-    test_websocket_flow()
+    test_websocket_lobby_and_start()

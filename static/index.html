@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <!-- Tela Inicial: Criação / Entrada na Sala -->
+  <!-- Tela Inicial: Criar ou Entrar na Sala -->
   <div id="lobbyScreen" class="screen active">
     <div class="lobby-card">
       <div class="game-logo">
@@ -19,14 +19,14 @@
         <span class="badge-subtitle">Simulador Kanban & Batch Size</span>
       </div>
       <p class="lobby-description">
-        Experimente na prática a diferença dramática entre a abordagem em 
-        <strong>Cascata (Lotes Grandes)</strong> e o <strong>Fluxo Contínuo Kanban (Lotes Pequenos)</strong>.
+        Experimente na prática o impacto drástico do <strong>Tamanho de Lotes (Batch Size)</strong> no fluxo de entrega,
+        Lead Time e gargalos em um projeto de migração de software.
       </p>
 
       <div class="lobby-form">
         <div class="input-group">
           <label for="inputPlayerName">Seu Nome / Apelido</label>
-          <input type="text" id="inputPlayerName" placeholder="Ex: Ana Silva" maxlength="20" autofocus />
+          <input type="text" id="inputPlayerName" placeholder="Ex: Lucas Silva" maxlength="20" autofocus />
         </div>
 
         <div class="input-group">
@@ -36,7 +36,7 @@
 
         <div class="lobby-actions">
           <button id="btnCreateRoom" class="btn btn-primary btn-lg">
-            <span>✨ Criar Nova Sala</span>
+            <span>👑 Criar Sala (Facilitador)</span>
           </button>
           <button id="btnJoinRoom" class="btn btn-secondary btn-lg">
             <span>🚀 Entrar na Sala</span>
@@ -45,7 +45,7 @@
       </div>
 
       <div class="lobby-footer">
-        <span>Simulação multiplayer em tempo real baseada no clássico Agile Coin Game</span>
+        <span>O criador da sala atua como Facilitador. Convidados aguardam na Sala de Espera.</span>
       </div>
     </div>
   </div>
@@ -92,7 +92,10 @@
         <button id="btnHistoryModal" class="btn btn-ghost btn-sm">📊 Comparativo</button>
         <div class="user-profile">
           <span class="avatar-circle" id="userAvatar">👤</span>
-          <span class="user-name" id="displayPlayerName">Jogador</span>
+          <div class="user-info-text">
+            <span class="user-name" id="displayPlayerName">Jogador</span>
+            <span class="user-role-badge" id="displayPlayerRole">Jogador</span>
+          </div>
         </div>
       </div>
     </header>
@@ -100,44 +103,68 @@
     <!-- Notificação Flutuante / Toast Banner -->
     <div id="toastBanner" class="toast-banner"></div>
 
-    <!-- Painel do Facilitador (Controles de Rodada) -->
-    <section class="facilitator-bar" id="facilitatorBar">
-      <div class="bar-title">
-        <span class="badge-role">Painel do Facilitador</span>
-        <span id="roundStatusText" class="round-status-tag">Aguardando Início</span>
+    <!-- =========================================================================
+         PAINEL DO FACILITADOR (VISÍVEL APENAS PARA O FACILITADOR)
+         ========================================================================= -->
+    <section class="facilitator-bar" id="facilitatorBar" style="display: none;">
+      <!-- Modo A: Quando está no Lobby de Espera -->
+      <div class="fac-lobby-controls" id="facLobbyControls">
+        <div class="bar-title">
+          <span class="badge-role">👑 Painel do Facilitador</span>
+          <span class="round-status-tag" id="facLobbyStatusText">Aguardando jogadores entrarem... (0 conectados)</span>
+        </div>
+        <div class="fac-actions">
+          <button id="btnMasterStartGame" class="btn btn-master-start">
+            <span>🚀 Iniciar Partida (Alocar Estações e Começar)</span>
+          </button>
+        </div>
       </div>
 
-      <div class="round-controls">
-        <button id="btnStartWaterfall" class="btn btn-cascade" title="Lote de 10 moedas">
-          <span>🌊 Rodada 1: Cascata (Lote 10)</span>
-        </button>
+      <!-- Modo B: Quando está Em Jogo -->
+      <div class="fac-ingame-controls" id="facInGameControls" style="display: none;">
+        <div class="bar-title">
+          <span class="badge-role">👑 Facilitador</span>
+          <span id="roundStatusText" class="round-status-tag">Em Andamento</span>
+        </div>
 
-        <button id="btnStartKanban" class="btn btn-kanban" title="Lote de 2 moedas">
-          <span>⚡ Rodada 2: Kanban (Lote 2)</span>
-        </button>
+        <div class="round-controls">
+          <button id="btnStartWaterfall" class="btn btn-cascade" title="Lote de 10 moedas">
+            <span>🌊 Rodada 1: Cascata (Lote 10)</span>
+          </button>
 
-        <button id="btnCustomRound" class="btn btn-outline-light">
-          <span>⚙️ Customizar...</span>
-        </button>
+          <button id="btnStartKanban" class="btn btn-kanban" title="Lote de 2 moedas">
+            <span>⚡ Rodada 2: Kanban (Lote 2)</span>
+          </button>
 
-        <button id="btnResetRound" class="btn btn-danger-soft" title="Reiniciar rodada atual">
-          <span>🔄 Reiniciar</span>
-        </button>
+          <button id="btnCustomRound" class="btn btn-outline-light">
+            <span>⚙️ Customizar...</span>
+          </button>
 
-        <!-- Toggle Modo Solo / Teste -->
-        <label class="toggle-switch" title="Permite clicar e testar qualquer estação sem precisar de 5 navegadores">
-          <input type="checkbox" id="checkSoloOverride" />
-          <span class="slider"></span>
-          <span class="toggle-text">Modo Solo / Teste</span>
-        </label>
+          <button id="btnResetRound" class="btn btn-danger-soft" title="Reiniciar rodada atual">
+            <span>🔄 Reiniciar Rodada</span>
+          </button>
+
+          <button id="btnReturnToLobby" class="btn btn-outline-light btn-sm" title="Voltar para a Sala de Espera">
+            <span>🚪 Sala de Espera</span>
+          </button>
+
+          <!-- Toggle Modo Solo / Teste -->
+          <label class="toggle-switch" title="Permite ao facilitador operar qualquer estação para demonstrações">
+            <input type="checkbox" id="checkSoloOverride" />
+            <span class="slider"></span>
+            <span class="toggle-text">Modo Solo / Teste</span>
+          </label>
+        </div>
       </div>
     </section>
 
-    <!-- Pipeline Global / Visão Kanban (Mostra as 5 Estações + Concluído) -->
-    <section class="pipeline-section">
+    <!-- =========================================================================
+         PIPELINE KANBAN GLOBAL (FLUXO DAS 5 ESTAÇÕES + CONCLUÍDO)
+         ========================================================================= -->
+    <section class="pipeline-section" id="pipelineSection">
       <div class="section-heading">
-        <h2>Fluxo de Valor do Projeto (Pipeline Kanban)</h2>
-        <span class="hint">Acompanhe a movimentação dos lotes e os gargalos de WIP em tempo real</span>
+        <h2>Fluxo Geral do Projeto (Pipeline Kanban)</h2>
+        <span class="hint">Acompanhe as 5 etapas, a movimentação dos lotes e os gargalos de WIP em tempo real</span>
       </div>
 
       <div class="pipeline-board" id="pipelineBoard">
@@ -145,76 +172,82 @@
       </div>
     </section>
 
-    <!-- Área de Trabalho do Jogador (A Minha Estação) -->
-    <main class="station-workspace" id="stationWorkspace">
-      <!-- Caso o jogador AINDA NÃO tenha escolhido uma estação -->
-      <div id="noStationCard" class="workspace-empty-card">
-        <h3>Escolha sua Estação para Jogar</h3>
-        <p>Cada jogador é responsável por uma etapa do ciclo de entrega. Escolha uma das estações livres abaixo:</p>
-        <div class="station-picker-grid" id="stationPickerGrid">
-          <!-- Gerado via JS com os cards das estações -->
+    <!-- =========================================================================
+         ÁREA DE CONTEÚDO PRINCIPAL (ALTERNÂNCIA LOBBY vs EM JOGO)
+         ========================================================================= -->
+    <main class="main-content-area" id="mainContentArea">
+      <!-- 1. SALA DE ESPERA (VISÃO DOS JOGADORES CONVIDADOS) -->
+      <div id="waitingRoomCard" class="waiting-room-card" style="display: none;">
+        <div class="radar-pulse-icon">
+          <div class="pulse-ring"></div>
+          <div class="pulse-ring delay"></div>
+          <span class="pulse-core">⏳</span>
+        </div>
+
+        <h2 id="waitingRoomTitle">Aguardando o facilitador iniciar a partida...</h2>
+        <p class="waiting-room-subtitle" id="waitingRoomSubtitle">
+          Você está na Sala de Espera. Assim que o facilitador iniciar a partida, as 5 etapas do projeto
+          serão distribuídas automaticamente entre os jogadores conectados.
+        </p>
+
+        <div class="lobby-roster-box">
+          <div class="roster-header">
+            <span>Jogadores Conectados na Sala</span>
+            <strong id="lobbyPlayersCountBadge" class="count-badge">0</strong>
+          </div>
+          <div class="roster-list" id="lobbyPlayersRoster">
+            <!-- Chips dos jogadores conectados gerados via JS -->
+          </div>
+        </div>
+
+        <div class="waiting-tip">
+          <span>💡 <strong>Como funciona a alocação:</strong> Se houver 5 jogadores, cada um receberá 1 estação. Se houver menos, as 5 etapas serão divididas automaticamente entre os disponíveis!</span>
         </div>
       </div>
 
-      <!-- Caso o jogador ESTEJA em uma estação ativa -->
-      <div id="activeStationCard" class="workspace-active-card" style="display: none;">
-        <div class="station-header">
-          <div class="st-left">
-            <span class="st-badge-icon" id="myStationIcon">📋</span>
+      <!-- 2. WORKSPACE DO FACILITADOR (QUANDO EM JOGO) -->
+      <div id="facilitatorDashboardCard" class="facilitator-dashboard-card" style="display: none;">
+        <div class="fac-dash-header">
+          <div class="fac-dash-title">
+            <span class="dash-icon">📊</span>
             <div>
-              <h2 id="myStationTitle">Estação 1: Levantamento e Análise</h2>
-              <span class="st-role-desc" id="myStationDesc">Você é o responsável por esta etapa.</span>
+              <h3>Centro de Comando do Facilitador</h3>
+              <p>Você é o host da simulação. Acompanhe o fluxo no Pipeline acima e oriente o time através das rodadas.</p>
             </div>
           </div>
-
-          <div class="st-right">
-            <button id="btnLeaveStation" class="btn btn-outline-light btn-sm">Trocar de Estação</button>
+          <div class="fac-dash-stats" id="facDashStats">
+            <!-- Resumo dinâmico -->
           </div>
         </div>
 
-        <!-- Fila de Lotes e Status da Estação -->
-        <div class="station-body">
-          <div class="queue-info-strip">
-            <div class="queue-stat">
-              <span class="stat-label">Lotes Aguardando:</span>
-              <strong id="myQueueCount">0</strong>
-            </div>
-            <div class="queue-stat">
-              <span class="stat-label">Lote em Processamento:</span>
-              <strong id="myActiveBatchNumber">Nenhum</strong>
-            </div>
-            <div class="queue-stat">
-              <span class="stat-label">Progresso do Lote:</span>
-              <strong id="myBatchProgressText">0 / 0</strong>
-            </div>
+        <div class="fac-guide-grid">
+          <div class="guide-card">
+            <h4>1️⃣ Rodada 1: Cascata (Lote 10)</h4>
+            <p>Demonstra o modelo tradicional. Lotes grandes forçam as estações seguintes a ficarem ociosas e atrasam drasticamente a 1ª entrega.</p>
           </div>
-
-          <!-- Barra de Progresso Visual do Lote -->
-          <div class="progress-bar-container">
-            <div class="progress-bar-fill" id="myBatchProgressBar" style="width: 0%;"></div>
+          <div class="guide-card highlight">
+            <h4>2️⃣ Rodada 2: Kanban (Lote 2)</h4>
+            <p>Demonstra o fluxo contínuo. Lotes pequenos geram paralelismo imediato, entrega contínua de valor e WIP reduzido.</p>
           </div>
-
-          <!-- Área Central das Moedas / Tarefas -->
-          <div class="coins-arena" id="coinsArena">
-            <!-- Moedas renderizadas via JS -->
-            <div class="arena-empty-state" id="arenaEmptyState">
-              <div class="empty-icon">⏳</div>
-              <h4>Nenhum lote nesta estação no momento</h4>
-              <p>Aguardando lote enviado pela estação anterior...</p>
-            </div>
+          <div class="guide-card">
+            <h4>3️⃣ Análise Comparativa</h4>
+            <p>Abra o botão <strong>"📊 Comparativo"</strong> após as rodadas para exibir o gráfico e os dados de Lead Time para a equipe.</p>
           </div>
+        </div>
+      </div>
 
-          <!-- Ação Principal: Enviar Lote (Regra do Lote Fechado) -->
-          <div class="dispatch-action-area">
-            <div class="batch-rule-banner" id="batchRuleBanner">
-              <span class="lock-icon">🔒</span>
-              <span id="batchRuleText">Regra do Lote Fechado: Clique em 100% das moedas para liberar o envio.</span>
-            </div>
-
-            <button id="btnDispatchBatch" class="btn btn-dispatch" disabled>
-              <span id="btnDispatchText">Enviar Lote para a Próxima Estação ➔</span>
-            </button>
+      <!-- 3. ÁREA DE TRABALHO DO JOGADOR: MINHAS ESTAÇÕES (QUANDO EM JOGO) -->
+      <div id="playerWorkspace" class="player-workspace" style="display: none;">
+        <div class="my-stations-header">
+          <div class="heading-text">
+            <h2>Minha Área de Trabalho</h2>
+            <span id="myStationsSubtitle" class="hint">Etapas sob sua responsabilidade neste projeto</span>
           </div>
+        </div>
+
+        <!-- Grid que suporta 1, 2 ou mais quadros de estações para o mesmo jogador -->
+        <div class="my-stations-grid" id="myStationsGrid">
+          <!-- Quadros de estações renderizados dinamicamente via JS -->
         </div>
       </div>
     </main>
@@ -228,8 +261,8 @@
         <button class="modal-close" id="btnCloseHelp">&times;</button>
       </div>
       <div class="modal-body">
-        <h4>O Desafio</h4>
-        <p>Simular a entrega de um projeto de migração de software através de 5 etapas consecutivas:</p>
+        <h4>O Desafio da Simulação</h4>
+        <p>Entregar um projeto de migração de software através de 5 etapas consecutivas:</p>
         <ol>
           <li><strong>Levantamento e Análise</strong></li>
           <li><strong>Modelagem Relacional</strong></li>
@@ -239,17 +272,20 @@
         </ol>
 
         <h4>Regra de Ouro (Regra do Lote Fechado)</h4>
-        <p>Você <strong>NÃO</strong> pode enviar moedas individualmente se elas pertencem a um lote maior. O botão de despacho só é liberado quando <strong>100% das moedas do lote atual forem processadas (clicadas)</strong> por você!</p>
+        <p>Você <strong>NÃO</strong> pode enviar moedas individualmente se elas pertencem a um lote fechado. O botão de envio só é habilitado quando <strong>100% das moedas do lote atual forem processadas</strong> na sua estação!</p>
 
-        <h4>A Comparação das Rodadas</h4>
+        <h4>Alocação Dinâmica de Estações</h4>
+        <p>Se a sala tiver menos de 5 jogadores, o sistema divide as 5 etapas entre os participantes. Sua tela exibirá quadros para cada etapa sob sua responsabilidade.</p>
+
+        <h4>As Duas Rodadas</h4>
         <div class="concept-cards">
           <div class="concept-card cascade">
             <h5>🌊 Rodada 1: Cascata (Lote 10)</h5>
-            <p>O trabalho é agrupado em lotes gigantes de 10 moedas. A Estação 1 precisa processar 10 antes de passar. As outras estações ficam ociosas esperando, e a 1ª entrega ao cliente demora muito!</p>
+            <p>Lotes de 10 moedas. A Estação 1 processa 10 antes de passar. As outras etapas ficam paradas esperando, e o cliente demora muito para ver o primeiro resultado!</p>
           </div>
           <div class="concept-card kanban">
             <h5>⚡ Rodada 2: Kanban (Lote 2)</h5>
-            <p>Com lotes de 2 moedas, o trabalho é passado adiante rapidamente. Todas as estações trabalham em paralelo, a 1ª entrega acontece em tempo recorde e as filas (WIP) diminuem drasticamente!</p>
+            <p>Lotes de 2 moedas. O trabalho flui rapidamente entre as estações em paralelo, a 1ª entrega acontece em tempo recorde e o estoque de trabalho (WIP) despenca!</p>
           </div>
         </div>
       </div>
@@ -264,7 +300,7 @@
         <button class="modal-close" id="btnCloseHistory">&times;</button>
       </div>
       <div class="modal-body">
-        <p>Veja os dados reais obtidos pela equipe nesta sessão de jogo:</p>
+        <p>Veja os dados reais de desempenho obtidos pela equipe nesta sessão:</p>
         <div class="table-responsive">
           <table class="history-table" id="historyTable">
             <thead>
@@ -275,7 +311,7 @@
                 <th>Total de Moedas</th>
                 <th>1ª Entrega (Lead Time)</th>
                 <th>Tempo Total</th>
-                <th>Hora</th>
+                <th>Horário</th>
               </tr>
             </thead>
             <tbody id="historyTableBody">
@@ -284,7 +320,7 @@
           </table>
         </div>
         <div id="emptyHistoryMsg" class="empty-history">
-          Nenhuma rodada foi concluída ainda. Inicie e conclua a Rodada 1 e a Rodada 2 para comparar!
+          Nenhuma rodada foi concluída ainda. Inicie a Rodada 1 e a Rodada 2 para comparar!
         </div>
 
         <div class="pedagogic-box" id="pedagogicBox" style="display: none;">

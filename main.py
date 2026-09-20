@@ -67,7 +67,7 @@ class Batch:
         return False
 
     def advance_station(self) -> int:
-        """Avança para a próxima estação e reseta o status das moedas para a nova estação"""
+        """Avança para a próxima estação e reseta o status das moedas para a nova etapa"""
         self.current_station += 1
         for coin in self.coins:
             coin.processed = False
@@ -93,13 +93,17 @@ class RoomState:
         self.creator_id = creator_id
         self.created_at = time.time()
         
+        # Fase da Sala: "lobby" (Sala de Espera) ou "in_game" (Partida Ativa)
+        self.room_phase = "lobby"
+        
         # Conexões WebSocket ativas: player_id -> WebSocket
         self.connections: Dict[str, WebSocket] = {}
         
         # Jogadores: player_id -> dict
+        # stations: lista de IDs das estações alocadas para este jogador (ex: [1, 2])
         self.players: Dict[str, dict] = {}
         
-        # Estações: station_id -> player_id | None
+        # Mapeamento Estação -> player_id | None
         self.station_assignments: Dict[int, Optional[str]] = {s["id"]: None for s in STATION_DEFINITIONS}
         
         # Estado da Rodada
@@ -124,18 +128,20 @@ class RoomState:
         if is_creator:
             self.creator_id = player_id
 
-        self.players[player_id] = {
-            "id": player_id,
-            "name": player_name,
-            "is_facilitator": is_creator,
-            "station": None,
-            "online": True
-        }
-        # Se algum assignment já estava com esse player, mantém
-        for st_id, pid in self.station_assignments.items():
-            if pid == player_id:
-                self.players[player_id]["station"] = st_id
-                break
+        if player_id not in self.players:
+            self.players[player_id] = {
+                "id": player_id,
+                "name": player_name,
+                "is_facilitator": is_creator,
+                "stations": [],
+                "online": True
+            }
+        else:
+            self.players[player_id]["name"] = player_name
+            self.players[player_id]["online"] = True
+            if is_creator:
+                self.players[player_id]["is_facilitator"] = True
+
         return True
 
     def remove_player_connection(self, player_id: str):
@@ -144,34 +150,80 @@ class RoomState:
         if player_id in self.players:
             self.players[player_id]["online"] = False
 
-    def claim_station(self, player_id: str, station_id: Optional[int]) -> bool:
-        if player_id not in self.players:
-            return False
-        
-        # Se station_id for None, liberar a estação atual
-        if station_id is None:
-            old_st = self.players[player_id]["station"]
-            if old_st and self.station_assignments.get(old_st) == player_id:
-                self.station_assignments[old_st] = None
-            self.players[player_id]["station"] = None
-            return True
+    def allocate_stations_dynamically(self) -> Dict[str, List[int]]:
+        """
+        Auto-balanceamento das 5 etapas entre os jogadores disponíveis.
+        O Facilitador não joga como trabalhador de estação (exceto se estiver 100% sozinho testando).
+        """
+        # Jogadores ativos elegíveis (excluindo facilitador, se houver convidados)
+        candidates = [
+            p for p in self.players.values() 
+            if p.get("online", False) and not p.get("is_facilitator", False)
+        ]
 
-        # Se já estiver ocupada por outro jogador online
-        current_occupant = self.station_assignments.get(station_id)
-        if current_occupant and current_occupant != player_id:
-            # Verifica se o outro jogador ainda está online
-            if current_occupant in self.players and self.players[current_occupant].get("online", False):
-                return False  # Estação ocupada
+        # Se nenhum jogador comum entrou, permite alocar ao facilitador para modo demonstração solo
+        if len(candidates) == 0:
+            facilitator = self.players.get(self.creator_id)
+            if facilitator:
+                candidates = [facilitator]
 
-        # Remove da estação anterior se tinha
-        old_st = self.players[player_id]["station"]
-        if old_st and self.station_assignments.get(old_st) == player_id:
-            self.station_assignments[old_st] = None
+        num_players = len(candidates)
+        # Limpa atribuições anteriores
+        for p in self.players.values():
+            p["stations"] = []
+        for s in self.station_assignments:
+            self.station_assignments[s] = None
 
-        # Atribui nova estação
-        self.station_assignments[station_id] = player_id
-        self.players[player_id]["station"] = station_id
+        if num_players == 0:
+            return {}
+
+        # Distribuição das 5 estações (1 a 5)
+        # Regras de balanceamento:
+        # 1 jogador: [1, 2, 3, 4, 5]
+        # 2 jogadores: [1, 2, 3], [4, 5]
+        # 3 jogadores: [1, 2], [3], [4, 5]
+        # 4 jogadores: [1, 2], [3], [4], [5]
+        # 5+ jogadores: 1 estação cada para os 5 primeiros
+        distribution_plan: List[List[int]] = []
+
+        if num_players == 1:
+            distribution_plan = [[1, 2, 3, 4, 5]]
+        elif num_players == 2:
+            distribution_plan = [[1, 2, 3], [4, 5]]
+        elif num_players == 3:
+            distribution_plan = [[1, 2], [3], [4, 5]]
+        elif num_players == 4:
+            distribution_plan = [[1, 2], [3], [4], [5]]
+        else:
+            distribution_plan = [[1], [2], [3], [4], [5]]
+
+        result_map: Dict[str, List[int]] = {}
+        for idx, stations in enumerate(distribution_plan):
+            if idx < len(candidates):
+                player = candidates[idx]
+                player["stations"] = stations
+                result_map[player["id"]] = stations
+                for st_id in stations:
+                    self.station_assignments[st_id] = player["id"]
+
+        return result_map
+
+    def start_game_from_lobby(self) -> bool:
+        """Transição da Sala de Espera para o Jogo Ativo com alocação dinâmica"""
+        self.room_phase = "in_game"
+        self.allocate_stations_dynamically()
+        # Inicia automaticamente a primeira rodada no modo Cascata (Lote 10)
+        self.start_round(round_type="waterfall", batch_size=10, total_coins=20)
         return True
+
+    def return_to_lobby(self):
+        """Retorna todos para a Sala de Espera"""
+        self.room_phase = "lobby"
+        self.reset_round()
+        for p in self.players.values():
+            p["stations"] = []
+        for s in self.station_assignments:
+            self.station_assignments[s] = None
 
     def start_round(self, round_type: str, batch_size: int = 10, total_coins: int = 20) -> bool:
         if round_type == "waterfall":
@@ -190,6 +242,10 @@ class RoomState:
         self.start_time = time.time()
         self.first_delivery_time = None
         self.total_delivery_time = None
+
+        # Garante que estações estejam alocadas
+        if all(self.station_assignments[s] is None for s in self.station_assignments):
+            self.allocate_stations_dynamically()
 
         # Gerar lotes
         self.batches = []
@@ -216,18 +272,22 @@ class RoomState:
         self.total_delivery_time = None
 
     def get_station_batches(self, station_id: int) -> List[Batch]:
-        """Retorna todos os lotes atualmente em uma estação (em ordem de chegada/número)"""
         return [b for b in self.batches if b.current_station == station_id]
 
-    def process_coin(self, player_id: str, batch_id: str, coin_idx: int, is_solo_override: bool = False) -> bool:
-        if self.round_status != "running":
-            return False
-
+    def can_player_operate_station(self, player_id: str, station_id: int, is_solo_override: bool = False) -> bool:
         player = self.players.get(player_id)
         if not player:
             return False
+        if is_solo_override:
+            return True
+        if player.get("is_facilitator", False) and is_solo_override:
+            return True
+        return station_id in player.get("stations", [])
 
-        # Localiza o lote
+    def process_coin(self, player_id: str, batch_id: str, coin_idx: int, is_solo_override: bool = False) -> bool:
+        if self.round_status != "running" or self.room_phase != "in_game":
+            return False
+
         target_batch = next((b for b in self.batches if b.batch_id == batch_id), None)
         if not target_batch:
             return False
@@ -236,26 +296,18 @@ class RoomState:
         if station_id > 5:
             return False
 
-        # Validação de permissão: jogador deve ser o dono da estação ou facilitador em modo teste
-        player_station = player.get("station")
-        is_facilitator = player.get("is_facilitator", False)
-        if not is_solo_override and player_station != station_id and not is_facilitator:
+        if not self.can_player_operate_station(player_id, station_id, is_solo_override):
             return False
 
-        # Verifica se este lote é o lote ativo (o primeiro lote da fila desta estação)
         station_batches = self.get_station_batches(station_id)
         if not station_batches or station_batches[0].batch_id != batch_id:
-            return False  # Só pode processar o primeiro lote da fila
+            return False
 
         return target_batch.process_coin(coin_idx)
 
     def dispatch_batch(self, player_id: str, batch_id: str, is_solo_override: bool = False) -> dict:
-        if self.round_status != "running":
-            return {"success": False, "error": "Rodada não está em andamento"}
-
-        player = self.players.get(player_id)
-        if not player:
-            return {"success": False, "error": "Jogador não encontrado"}
+        if self.round_status != "running" or self.room_phase != "in_game":
+            return {"success": False, "error": "Partida ou rodada não está em andamento"}
 
         target_batch = next((b for b in self.batches if b.batch_id == batch_id), None)
         if not target_batch:
@@ -265,11 +317,8 @@ class RoomState:
         if station_id > 5:
             return {"success": False, "error": "Lote já concluído"}
 
-        # Validação de permissão
-        player_station = player.get("station")
-        is_facilitator = player.get("is_facilitator", False)
-        if not is_solo_override and player_station != station_id and not is_facilitator:
-            return {"success": False, "error": "Você não está alocado nesta estação"}
+        if not self.can_player_operate_station(player_id, station_id, is_solo_override):
+            return {"success": False, "error": "Esta etapa não está sob sua responsabilidade"}
 
         # REGRA CRÍTICA DO LOTE FECHADO: 100% das moedas devem ter sido processadas
         if not target_batch.is_fully_processed():
@@ -278,7 +327,6 @@ class RoomState:
                 "error": "Regra do Lote Fechado: Todas as moedas do lote precisam ser processadas antes do envio!"
             }
 
-        # Avança o lote
         new_station = target_batch.advance_station()
         now = time.time()
         elapsed = now - (self.start_time or now)
@@ -286,20 +334,17 @@ class RoomState:
         first_delivery_event = False
         round_completed_event = False
 
-        # Se saiu da estação 5, foi para a estação 6 (Concluído)
         if new_station == 6:
             if self.first_delivery_time is None:
                 self.first_delivery_time = round(elapsed, 2)
                 first_delivery_event = True
 
-            # Verifica se todos os lotes foram entregues
             all_done = all(b.current_station == 6 for b in self.batches)
             if all_done:
                 self.total_delivery_time = round(elapsed, 2)
                 self.round_status = "completed"
                 round_completed_event = True
                 
-                # Salva no histórico comparativo
                 self.history.append({
                     "round_number": self.round_number,
                     "round_type": self.round_type,
@@ -320,7 +365,6 @@ class RoomState:
         }
 
     def get_wip_by_station(self) -> Dict[str, int]:
-        """Calcula o WIP (número de moedas paradas/em processo) por estação"""
         wip = {str(i): 0 for i in range(1, 6)}
         wip["done"] = 0
         for b in self.batches:
@@ -331,7 +375,6 @@ class RoomState:
         return wip
 
     def to_dict(self) -> dict:
-        # Prepara a lista de estações enriquecida com ocupante
         stations_info = []
         for st in STATION_DEFINITIONS:
             occupant_id = self.station_assignments.get(st["id"])
@@ -357,10 +400,17 @@ class RoomState:
         elif self.total_delivery_time:
             elapsed_now = self.total_delivery_time
 
+        # Contagem de jogadores no lobby
+        connected_players = [p for p in self.players.values() if p.get("online", False)]
+        guests_count = len([p for p in connected_players if not p.get("is_facilitator", False)])
+
         return {
             "room_id": self.room_id,
             "creator_id": self.creator_id,
+            "room_phase": self.room_phase,  # "lobby" | "in_game"
             "players": list(self.players.values()),
+            "connected_players_count": len(connected_players),
+            "guests_count": guests_count,
             "stations": stations_info,
             "round": {
                 "round_number": self.round_number,
@@ -414,12 +464,15 @@ async def check_room(room_id: str):
     room = room_manager.get_room(room_id)
     if not room:
         raise HTTPException(status_code=404, detail="Sala não encontrada")
-    return {"room_id": room.room_id, "players_count": len(room.players)}
+    return {
+        "room_id": room.room_id,
+        "room_phase": room.room_phase,
+        "players_count": len(room.players)
+    }
 
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok", "rooms_active": len(room_manager.rooms)}
-
 
 # --- WebSocket Handler ---
 
@@ -470,16 +523,27 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                     "notification": f"{player_name} entrou na sala!"
                 })
 
-            elif action == "CLAIM_STATION":
-                station_id = data.get("station_id")
-                if station_id is not None:
-                    station_id = int(station_id)
-                success = room.claim_station(current_player_id, station_id)
-                st_name = STATION_DEFINITIONS[station_id - 1]["name"] if station_id else "Observador"
-                p_name = room.players.get(current_player_id, {}).get("name", "Jogador")
-                await broadcast_room(room, "ROOM_STATE", {
-                    "notification": f"{p_name} assumiu a estação: {st_name}" if success else "Estação ocupada!"
-                })
+            elif action == "START_GAME":
+                # Apenas facilitador pode iniciar a partida a partir da sala de espera
+                player = room.players.get(current_player_id)
+                if player and player.get("is_facilitator", False):
+                    room.start_game_from_lobby()
+                    await broadcast_room(room, "GAME_STARTED", {
+                        "notification": "🚀 Partida iniciada pelo Facilitador! Estações alocadas!"
+                    })
+                else:
+                    await websocket.send_text(json.dumps({
+                        "type": "ERROR_MSG",
+                        "message": "Apenas o Facilitador pode iniciar a partida."
+                    }))
+
+            elif action == "RETURN_TO_LOBBY":
+                player = room.players.get(current_player_id)
+                if player and player.get("is_facilitator", False):
+                    room.return_to_lobby()
+                    await broadcast_room(room, "ROOM_STATE", {
+                        "notification": "Retornado para a Sala de Espera (Lobby)."
+                    })
 
             elif action == "START_ROUND":
                 round_type = data.get("round_type", "waterfall")
@@ -543,7 +607,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
     except Exception as e:
         if current_player_id:
             room.remove_player_connection(current_player_id)
-
 
 # Servir Frontend Estático
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")

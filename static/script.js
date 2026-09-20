@@ -1,6 +1,6 @@
 /**
  * The Coin Game — Simulador Kanban & Batch Size
- * Frontend Client (WebSockets, UI & Web Audio API)
+ * Frontend Client (WebSockets, Lobby, Facilitador & Alocação Dinâmica)
  */
 
 // --- Estado Global do Cliente ---
@@ -8,7 +8,6 @@ let socket = null;
 let currentRoomId = null;
 let myPlayerId = localStorage.getItem("coin_game_player_id") || "p-" + Math.random().toString(36).substring(2, 8);
 let myPlayerName = localStorage.getItem("coin_game_player_name") || "";
-let myStationId = null;
 let currentRoomState = null;
 let soundEnabled = true;
 let soloOverride = false;
@@ -28,7 +27,7 @@ const currentRoomCode = document.getElementById("currentRoomCode");
 const btnCopyLink = document.getElementById("btnCopyLink");
 const connectionStatus = document.getElementById("connectionStatus");
 const displayPlayerName = document.getElementById("displayPlayerName");
-const userAvatar = document.getElementById("userAvatar");
+const displayPlayerRole = document.getElementById("displayPlayerRole");
 const toastBanner = document.getElementById("toastBanner");
 const btnSoundToggle = document.getElementById("btnSoundToggle");
 
@@ -38,35 +37,38 @@ const metricFirstDelivery = document.getElementById("metricFirstDelivery");
 const metricBatchSize = document.getElementById("metricBatchSize");
 const metricCompletedCoins = document.getElementById("metricCompletedCoins");
 
-// Facilitador
+// Painel do Facilitador
 const facilitatorBar = document.getElementById("facilitatorBar");
+const facLobbyControls = document.getElementById("facLobbyControls");
+const facInGameControls = document.getElementById("facInGameControls");
+const facLobbyStatusText = document.getElementById("facLobbyStatusText");
+const btnMasterStartGame = document.getElementById("btnMasterStartGame");
 const roundStatusText = document.getElementById("roundStatusText");
 const btnStartWaterfall = document.getElementById("btnStartWaterfall");
 const btnStartKanban = document.getElementById("btnStartKanban");
 const btnCustomRound = document.getElementById("btnCustomRound");
 const btnResetRound = document.getElementById("btnResetRound");
+const btnReturnToLobby = document.getElementById("btnReturnToLobby");
 const checkSoloOverride = document.getElementById("checkSoloOverride");
 
-// Pipeline
+// Pipeline Global
 const pipelineBoard = document.getElementById("pipelineBoard");
 
-// Estação Ativa
-const noStationCard = document.getElementById("noStationCard");
-const activeStationCard = document.getElementById("activeStationCard");
-const stationPickerGrid = document.getElementById("stationPickerGrid");
-const myStationIcon = document.getElementById("myStationIcon");
-const myStationTitle = document.getElementById("myStationTitle");
-const myStationDesc = document.getElementById("myStationDesc");
-const btnLeaveStation = document.getElementById("btnLeaveStation");
-const myQueueCount = document.getElementById("myQueueCount");
-const myActiveBatchNumber = document.getElementById("myActiveBatchNumber");
-const myBatchProgressText = document.getElementById("myBatchProgressText");
-const myBatchProgressBar = document.getElementById("myBatchProgressBar");
-const coinsArena = document.getElementById("coinsArena");
-const batchRuleBanner = document.getElementById("batchRuleBanner");
-const batchRuleText = document.getElementById("batchRuleText");
-const btnDispatchBatch = document.getElementById("btnDispatchBatch");
-const btnDispatchText = document.getElementById("btnDispatchText");
+// Visão 1: Sala de Espera dos Jogadores
+const waitingRoomCard = document.getElementById("waitingRoomCard");
+const waitingRoomTitle = document.getElementById("waitingRoomTitle");
+const waitingRoomSubtitle = document.getElementById("waitingRoomSubtitle");
+const lobbyPlayersCountBadge = document.getElementById("lobbyPlayersCountBadge");
+const lobbyPlayersRoster = document.getElementById("lobbyPlayersRoster");
+
+// Visão 2: Dashboard do Facilitador em Jogo
+const facilitatorDashboardCard = document.getElementById("facilitatorDashboardCard");
+const facDashStats = document.getElementById("facDashStats");
+
+// Visão 3: Área de Trabalho do Jogador (Multi-Estações)
+const playerWorkspace = document.getElementById("playerWorkspace");
+const myStationsSubtitle = document.getElementById("myStationsSubtitle");
+const myStationsGrid = document.getElementById("myStationsGrid");
 
 // Modais
 const btnHelpModal = document.getElementById("btnHelpModal");
@@ -87,7 +89,7 @@ const btnConfirmCustomRound = document.getElementById("btnConfirmCustomRound");
 const customBatchSize = document.getElementById("customBatchSize");
 const customTotalCoins = document.getElementById("customTotalCoins");
 
-// --- Síntese de Efeitos Sonoros com Web Audio API (Zero Dependências) ---
+// --- Síntese de Áudio com Web Audio API (Zero Dependências) ---
 let audioCtx = null;
 function getAudioContext() {
   if (!audioCtx) {
@@ -121,7 +123,7 @@ function playTone(freq, type = "sine", duration = 0.1, gainVal = 0.15) {
 }
 
 function soundCoinClick() {
-  playTone(720, "triangle", 0.08, 0.2);
+  playTone(740, "triangle", 0.08, 0.2);
 }
 
 function soundBatchReady() {
@@ -133,15 +135,15 @@ function soundBatchReady() {
 
 function soundDispatch() {
   if (!soundEnabled) return;
-  playTone(440, "sine", 0.15, 0.2);
-  setTimeout(() => playTone(880, "sine", 0.2, 0.2), 80);
+  playTone(440, "sine", 0.12, 0.2);
+  setTimeout(() => playTone(880, "sine", 0.18, 0.2), 70);
 }
 
 function soundFirstDelivery() {
   if (!soundEnabled) return;
   const notes = [523.25, 659.25, 783.99, 1046.50];
   notes.forEach((freq, idx) => {
-    setTimeout(() => playTone(freq, "triangle", 0.3, 0.25), idx * 120);
+    setTimeout(() => playTone(freq, "triangle", 0.28, 0.22), idx * 110);
   });
 }
 
@@ -157,14 +159,13 @@ function showToast(message, duration = 3500) {
   }, duration);
 }
 
-// --- Inicialização e Parâmetros de URL ---
+// --- Inicialização ---
 function initApp() {
   if (myPlayerName) {
     inputPlayerName.value = myPlayerName;
     displayPlayerName.textContent = myPlayerName;
   }
 
-  // Verifica se há room na URL (?room=XYZ)
   const urlParams = new URLSearchParams(window.location.search);
   const roomParam = urlParams.get("room");
   if (roomParam) {
@@ -178,12 +179,14 @@ function initApp() {
 }
 
 function setupEventListeners() {
+  // Criar sala (Assume papel de Facilitador)
   btnCreateRoom.addEventListener("click", () => {
     const name = inputPlayerName.value.trim() || "Facilitador";
     savePlayerName(name);
     createAndJoinRoom(name);
   });
 
+  // Entrar na sala (Jogador convidado)
   btnJoinRoom.addEventListener("click", () => {
     const name = inputPlayerName.value.trim() || "Jogador";
     const code = inputRoomCode.value.trim().toUpperCase();
@@ -213,9 +216,21 @@ function setupEventListeners() {
   checkSoloOverride.addEventListener("change", (e) => {
     soloOverride = e.target.checked;
     if (soloOverride) {
-      showToast("🛠️ Modo Solo/Teste ativado! Você pode operar qualquer estação.", 4000);
+      showToast("🛠️ Modo Solo/Teste ativado! Você pode operar todas as estações nesta tela.", 4000);
     }
-    renderStationWorkspace();
+    renderMainContent(currentRoomState);
+  });
+
+  // Facilitador: Botão Mestre Iniciar Partida
+  btnMasterStartGame.addEventListener("click", () => {
+    sendWsMessage({ action: "START_GAME" });
+  });
+
+  // Facilitador: Voltar ao Lobby
+  btnReturnToLobby.addEventListener("click", () => {
+    if (confirm("Deseja pausar o jogo e retornar todos para a Sala de Espera?")) {
+      sendWsMessage({ action: "RETURN_TO_LOBBY" });
+    }
   });
 
   // Facilitador: Controles de Rodada
@@ -238,7 +253,7 @@ function setupEventListeners() {
   });
 
   btnResetRound.addEventListener("click", () => {
-    if (confirm("Deseja realmente reiniciar a rodada atual?")) {
+    if (confirm("Deseja reiniciar a rodada atual?")) {
       sendWsMessage({ action: "RESET_ROUND" });
     }
   });
@@ -261,33 +276,6 @@ function setupEventListeners() {
       total_coins: tCoins
     });
     modalCustom.classList.remove("active");
-  });
-
-  // Trocar de Estação
-  btnLeaveStation.addEventListener("click", () => {
-    sendWsMessage({
-      action: "CLAIM_STATION",
-      station_id: null
-    });
-    myStationId = null;
-  });
-
-  // Botão Despachar Lote
-  btnDispatchBatch.addEventListener("click", () => {
-    const activeBatch = getMyActiveBatch();
-    if (!activeBatch) return;
-
-    if (!activeBatch.is_ready_to_send) {
-      alert("Atenção: A Regra do Lote Fechado exige que todas as moedas do lote sejam processadas antes do envio!");
-      return;
-    }
-
-    soundDispatch();
-    sendWsMessage({
-      action: "DISPATCH_BATCH",
-      batch_id: activeBatch.batch_id,
-      solo_override: soloOverride
-    });
   });
 
   // Modais de Ajuda e Histórico
@@ -327,7 +315,6 @@ async function createAndJoinRoom(playerName) {
     }
   } catch (err) {
     console.error("Erro ao criar sala:", err);
-    // Fallback: gera localmente e conecta
     const fallbackCode = Math.random().toString(36).substring(2, 8).toUpperCase();
     joinRoom(fallbackCode, playerName);
   }
@@ -337,7 +324,6 @@ function joinRoom(roomId, playerName) {
   currentRoomId = roomId.toUpperCase();
   currentRoomCode.textContent = currentRoomId;
 
-  // Atualiza query param na barra de endereço sem recarregar
   const newUrl = `${window.location.pathname}?room=${currentRoomId}`;
   window.history.replaceState({ path: newUrl }, "", newUrl);
 
@@ -367,7 +353,6 @@ function connectWebSocket(roomId, playerName) {
       playerId: myPlayerId
     });
 
-    // Troca para tela do jogo
     lobbyScreen.classList.remove("active");
     gameScreen.classList.add("active");
   };
@@ -384,7 +369,6 @@ function connectWebSocket(roomId, playerName) {
   socket.onclose = () => {
     connectionStatus.textContent = "Desconectado";
     connectionStatus.className = "connection-status offline";
-    // Tenta reconectar em 3 segundos
     setTimeout(() => {
       if (gameScreen.classList.contains("active")) {
         connectWebSocket(roomId, playerName);
@@ -399,20 +383,22 @@ function connectWebSocket(roomId, playerName) {
 
 function sendWsMessage(payload) {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
-    console.warn("WebSocket não está pronto para enviar mensagem.");
+    console.warn("WebSocket não está conectado.");
     return;
   }
   payload.playerId = myPlayerId;
   socket.send(JSON.stringify(payload));
 }
 
-// --- Manipulação das Mensagens Recebidas do Servidor ---
+// --- Tratamento das Mensagens do Servidor ---
 function handleServerMessage(msg) {
   if (msg.notification) {
     showToast(msg.notification, 4000);
   }
 
-  if (msg.first_delivery_event) {
+  if (msg.type === "GAME_STARTED") {
+    soundFirstDelivery();
+  } else if (msg.first_delivery_event) {
     soundFirstDelivery();
   } else if (msg.round_completed_event) {
     soundFirstDelivery();
@@ -427,10 +413,8 @@ function handleServerMessage(msg) {
     currentRoomState = msg.state;
     renderGameState(currentRoomState);
   } else if (msg.type === "COIN_PROCESSED") {
-    // Atualização pontual ou re-render
     soundCoinClick();
     if (currentRoomState) {
-      // Localmente marca a moeda
       const targetBatch = currentRoomState.stations
         .flatMap(s => s.batches)
         .find(b => b.batch_id === msg.batch_id);
@@ -439,52 +423,51 @@ function handleServerMessage(msg) {
         targetBatch.processed_count = targetBatch.coins.filter(c => c.processed).length;
         targetBatch.is_ready_to_send = targetBatch.processed_count === targetBatch.size;
         targetBatch.progress_percent = Math.round((targetBatch.processed_count / targetBatch.size) * 100);
-        renderStationWorkspace();
+        renderMainContent(currentRoomState);
       }
     }
   }
 }
 
-// --- Renderização do Estado Geral do Jogo ---
+// --- Renderização do Estado Geral ---
 function renderGameState(state) {
   if (!state) return;
 
-  // Atualiza minha estação
-  const myPlayerObj = state.players.find(p => p.id === myPlayerId);
-  if (myPlayerObj) {
-    myStationId = myPlayerObj.station;
+  const myPlayer = state.players.find(p => p.id === myPlayerId);
+  const isFacilitator = myPlayer ? myPlayer.is_facilitator : false;
+
+  // Atualiza crachá de perfil
+  if (displayPlayerRole) {
+    displayPlayerRole.textContent = isFacilitator ? "👑 Facilitador" : "🕹️ Jogador";
+    displayPlayerRole.style.color = isFacilitator ? "#c4b5fd" : "#34d399";
   }
 
-  // Métricas do Topo
+  // Top Metrics
   renderTopMetrics(state.round);
 
-  // Status da Rodada no Painel do Facilitador
-  renderFacilitatorBar(state);
+  // Painel do Facilitador
+  renderFacilitatorControls(state, isFacilitator);
 
-  // Pipeline Kanban Geral
+  // Pipeline Kanban
   renderPipelineBoard(state);
 
-  // Área de Trabalho do Jogador
-  renderStationWorkspace();
+  // Área de Conteúdo Principal (Lobby vs Dashboard vs Estações)
+  renderMainContent(state);
 }
 
 function renderTopMetrics(round) {
   if (!round) return;
 
-  // Tamanho do lote
   metricBatchSize.textContent = round.batch_size ? `${round.batch_size} moedas` : "--";
 
-  // 1ª Entrega
   if (round.first_delivery_time !== null && round.first_delivery_time !== undefined) {
     metricFirstDelivery.textContent = `${round.first_delivery_time.toFixed(1)}s ⭐`;
   } else {
-    metricFirstDelivery.textContent = round.status === "running" ? "Em trânsito..." : "--";
+    metricFirstDelivery.textContent = round.status === "running" ? "Em fluxo..." : "--";
   }
 
-  // Concluídas
   metricCompletedCoins.textContent = `${round.completed_coins_count} / ${round.total_coins || 0}`;
 
-  // Controle do Cronômetro Local
   if (round.status === "running" && round.start_time) {
     if (!localTimerInterval) {
       localTimerInterval = setInterval(() => {
@@ -514,35 +497,58 @@ function formatTimer(seconds) {
   return `${mm}:${ss}.${ms}`;
 }
 
-function renderFacilitatorBar(state) {
-  const round = state.round;
-  const isRunning = round.status === "running";
-  const isCompleted = round.status === "completed";
-
-  if (isRunning) {
-    roundStatusText.textContent = `Em Andamento: Rodada ${round.round_number} (${round.round_type.toUpperCase()} - Lote ${round.batch_size})`;
-    roundStatusText.className = "round-status-tag running";
-  } else if (isCompleted) {
-    roundStatusText.textContent = `Rodada ${round.round_number} Concluída! (${round.total_delivery_time}s)`;
-    roundStatusText.className = "round-status-tag";
-  } else {
-    roundStatusText.textContent = "Aguardando Início da Rodada";
-    roundStatusText.className = "round-status-tag";
+// --- Painel do Facilitador ---
+function renderFacilitatorControls(state, isFacilitator) {
+  if (!isFacilitator) {
+    facilitatorBar.style.display = "none";
+    return;
   }
 
-  btnStartWaterfall.disabled = isRunning;
-  btnStartKanban.disabled = isRunning;
-  btnCustomRound.disabled = isRunning;
+  facilitatorBar.style.display = "block";
+  const isLobby = state.room_phase === "lobby";
+
+  if (isLobby) {
+    facLobbyControls.style.display = "flex";
+    facInGameControls.style.display = "none";
+
+    const guests = state.guests_count || 0;
+    facLobbyStatusText.textContent = `Aguardando jogadores entrarem... (${guests} convidados prontos)`;
+    btnMasterStartGame.innerHTML = `<span>🚀 Iniciar Partida (Alocar ${guests > 0 ? guests : "Solo"} Jogador${guests === 1 ? "" : "es"})</span>`;
+  } else {
+    facLobbyControls.style.display = "none";
+    facInGameControls.style.display = "flex";
+
+    const round = state.round;
+    const isRunning = round.status === "running";
+    const isCompleted = round.status === "completed";
+
+    if (isRunning) {
+      roundStatusText.textContent = `Rodada ${round.round_number} (${round.round_type.toUpperCase()} - Lote ${round.batch_size})`;
+      roundStatusText.className = "round-status-tag running";
+    } else if (isCompleted) {
+      roundStatusText.textContent = `Rodada ${round.round_number} Finalizada (${round.total_delivery_time}s)`;
+      roundStatusText.className = "round-status-tag";
+    } else {
+      roundStatusText.textContent = "Aguardando Início da Rodada";
+      roundStatusText.className = "round-status-tag";
+    }
+
+    btnStartWaterfall.disabled = isRunning;
+    btnStartKanban.disabled = isRunning;
+    btnCustomRound.disabled = isRunning;
+  }
 }
 
-// --- Renderização do Pipeline Kanban ---
+// --- Pipeline Kanban Global ---
 function renderPipelineBoard(state) {
   if (!pipelineBoard) return;
   pipelineBoard.innerHTML = "";
 
-  // Colunas 1 a 5 (Estações)
+  const myPlayer = state.players.find(p => p.id === myPlayerId);
+  const myStations = myPlayer ? (myPlayer.stations || []) : [];
+
   state.stations.forEach((st) => {
-    const isMySt = myStationId === st.id;
+    const isMySt = myStations.includes(st.id);
     const isBottleneck = st.wip_coins >= 10;
 
     const col = document.createElement("div");
@@ -562,7 +568,7 @@ function renderPipelineBoard(state) {
 
       <div class="col-player-assigned">
         <span class="dot ${st.is_online ? "" : "offline"}"></span>
-        <span>${st.assigned_player_name || "Vaga aberta"}</span>
+        <span>${st.assigned_player_name || (state.room_phase === "lobby" ? "Aguardando início" : "Vaga aberta")}</span>
       </div>
 
       <div class="col-batches-container">
@@ -573,7 +579,7 @@ function renderPipelineBoard(state) {
     pipelineBoard.appendChild(col);
   });
 
-  // Coluna 6: Concluído (Done)
+  // Coluna Concluído
   const doneCoins = state.round.completed_coins_count || 0;
   const doneCol = document.createElement("div");
   doneCol.className = "pipeline-col";
@@ -623,122 +629,196 @@ function renderStationBatchChips(batches) {
   }).join("");
 }
 
-// --- Renderização da Área de Trabalho do Jogador ---
-function getMyActiveBatch() {
-  if (!currentRoomState) return null;
-  const effectiveStation = soloOverride ? (myStationId || 1) : myStationId;
-  if (!effectiveStation) return null;
+// --- Renderização da Área Principal (Lobby vs Em Jogo) ---
+function renderMainContent(state) {
+  const isLobby = state.room_phase === "lobby";
+  const myPlayer = state.players.find(p => p.id === myPlayerId);
+  const isFacilitator = myPlayer ? myPlayer.is_facilitator : false;
 
-  const st = currentRoomState.stations.find(s => s.id === effectiveStation);
-  if (!st || !st.batches || st.batches.length === 0) return null;
-  return st.batches[0]; // Primeiro lote da fila desta estação
-}
+  // CASO 1: SALA DE ESPERA (LOBBY)
+  if (isLobby) {
+    waitingRoomCard.style.display = isFacilitator ? "none" : "flex";
+    facilitatorDashboardCard.style.display = isFacilitator ? "flex" : "none";
+    playerWorkspace.style.display = "none";
 
-function renderStationWorkspace() {
-  if (!currentRoomState) return;
-
-  // Se não estiver em nenhuma estação e solo mode estiver desligado
-  if (!myStationId && !soloOverride) {
-    noStationCard.style.display = "block";
-    activeStationCard.style.display = "none";
-    renderStationPicker();
+    renderWaitingRoomRoster(state);
     return;
   }
 
-  // Jogador está em uma estação (ou operando em modo solo)
-  noStationCard.style.display = "none";
-  activeStationCard.style.display = "block";
+  // CASO 2: EM JOGO (PARTIDA INICIADA)
+  waitingRoomCard.style.display = "none";
 
-  const effectiveStationId = myStationId || (soloOverride ? 1 : 1);
-  const stationObj = currentRoomState.stations.find(s => s.id === effectiveStationId);
-
-  if (!stationObj) return;
-
-  myStationIcon.textContent = stationObj.icon;
-  myStationTitle.textContent = `Estação ${stationObj.id}: ${stationObj.name}`;
-  myStationDesc.textContent = soloOverride 
-    ? `[Modo Solo Ativo] Você pode clicar e enviar tarefas para qualquer estação.`
-    : `Você é o responsável por esta etapa. Processe as moedas e envie os lotes para o próximo colega.`;
-
-  const batches = stationObj.batches || [];
-  const activeBatch = batches.length > 0 ? batches[0] : null;
-
-  myQueueCount.textContent = Math.max(0, batches.length - 1);
-  myActiveBatchNumber.textContent = activeBatch ? `Lote #${activeBatch.batch_number} (${activeBatch.size} moedas)` : "Nenhum";
-
-  if (activeBatch) {
-    myBatchProgressText.textContent = `${activeBatch.processed_count} / ${activeBatch.size} (${activeBatch.progress_percent}%)`;
-    myBatchProgressBar.style.width = `${activeBatch.progress_percent}%`;
-    renderCoinsArena(activeBatch);
-    renderDispatchButton(activeBatch, stationObj.id);
+  if (isFacilitator && !soloOverride) {
+    // Facilitador sem modo solo: vê dashboard de comando
+    facilitatorDashboardCard.style.display = "flex";
+    playerWorkspace.style.display = "none";
   } else {
-    myBatchProgressText.textContent = "0 / 0 (0%)";
-    myBatchProgressBar.style.width = "0%";
-    coinsArena.innerHTML = `
-      <div class="arena-empty-state">
-        <div class="empty-icon">⏳</div>
-        <h4>Nenhum lote nesta estação no momento</h4>
-        <p>Aguardando lote enviado pela estação anterior...</p>
-      </div>
-    `;
-    btnDispatchBatch.disabled = true;
-    btnDispatchText.textContent = "Aguardando Lote...";
-    batchRuleBanner.className = "batch-rule-banner";
-    batchRuleText.textContent = "Regra do Lote Fechado: Aguardando novo lote para processamento.";
+    // Jogador comum (ou facilitador em modo solo/teste): vê suas estações
+    facilitatorDashboardCard.style.display = "none";
+    playerWorkspace.style.display = "flex";
+    renderMyStationsWorkspace(state, myPlayer, isFacilitator);
   }
 }
 
-function renderStationPicker() {
-  if (!stationPickerGrid || !currentRoomState) return;
-  stationPickerGrid.innerHTML = "";
+// Renderiza a lista de avatares na Sala de Espera
+function renderWaitingRoomRoster(state) {
+  if (!lobbyPlayersRoster) return;
+  lobbyPlayersRoster.innerHTML = "";
 
-  currentRoomState.stations.forEach(st => {
-    const isOccupied = !!st.assigned_player_id && st.is_online;
-    const isMe = st.assigned_player_id === myPlayerId;
+  const connectedPlayers = state.players.filter(p => p.online);
+  lobbyPlayersCountBadge.textContent = `${connectedPlayers.length} conectados`;
 
-    const btn = document.createElement("div");
-    btn.className = `station-pick-btn ${isOccupied && !isMe ? "occupied" : ""}`;
-    btn.style.borderTop = `4px solid ${st.color}`;
-
-    let statusText = `<span class="pick-status free">✨ Disponível</span>`;
-    if (isMe) {
-      statusText = `<span class="pick-status" style="color: var(--accent-blue);">Sua Estação Atual</span>`;
-    } else if (isOccupied) {
-      statusText = `<span class="pick-status occupied-name">👤 ${st.assigned_player_name}</span>`;
-    }
-
-    btn.innerHTML = `
-      <span class="pick-icon">${st.icon}</span>
-      <span class="pick-name">Estação ${st.id}</span>
-      <span style="font-size: 11px; color: var(--text-muted);">${st.name}</span>
-      ${statusText}
+  connectedPlayers.forEach(p => {
+    const chip = document.createElement("div");
+    chip.className = `player-roster-chip ${p.is_facilitator ? "is-facilitator" : ""} ${p.id === myPlayerId ? "is-me" : ""}`;
+    chip.innerHTML = `
+      <span>${p.is_facilitator ? "👑" : "👤"}</span>
+      <span>${p.name} ${p.id === myPlayerId ? "(Você)" : ""}</span>
+      ${p.is_facilitator ? '<span style="font-size: 10px; opacity: 0.8;">[Host]</span>' : ""}
     `;
-
-    if (!isOccupied || isMe || soloOverride) {
-      btn.addEventListener("click", () => {
-        sendWsMessage({
-          action: "CLAIM_STATION",
-          station_id: st.id
-        });
-        myStationId = st.id;
-      });
-    }
-
-    stationPickerGrid.appendChild(btn);
+    lobbyPlayersRoster.appendChild(chip);
   });
 }
 
-// --- Renderização da Arena de Moedas 3D ---
-function renderCoinsArena(batch) {
-  if (!coinsArena) return;
-  coinsArena.innerHTML = "";
+// Renderiza a Área de Trabalho Multi-Estação do Jogador
+function renderMyStationsWorkspace(state, myPlayer, isFacilitator) {
+  if (!myStationsGrid) return;
+  myStationsGrid.innerHTML = "";
 
-  batch.coins.forEach((coin, idx) => {
-    const coinEl = document.createElement("div");
-    coinEl.className = `coin-wrapper ${coin.processed ? "processed" : ""}`;
-    coinEl.title = coin.processed ? "Moeda Processada (✓)" : "Clique para processar esta moeda";
+  // Determina quais estações este jogador opera
+  let stationsToRender = [];
+  if (soloOverride) {
+    // Em modo solo: renderiza todas as 5 estações para teste completo
+    stationsToRender = state.stations;
+    myStationsSubtitle.textContent = "[Modo Solo Ativo] Você tem controle sobre todas as 5 etapas da simulação.";
+  } else {
+    const assignedIds = myPlayer ? (myPlayer.stations || []) : [];
+    stationsToRender = state.stations.filter(s => assignedIds.includes(s.id));
+    if (stationsToRender.length === 1) {
+      myStationsSubtitle.textContent = `Você é o responsável pela Estação ${stationsToRender[0].id}: ${stationsToRender[0].name}`;
+    } else {
+      myStationsSubtitle.textContent = `Você é o responsável por ${stationsToRender.length} etapas consecutivas do projeto.`;
+    }
+  }
 
-    coinEl.innerHTML = `
+  if (stationsToRender.length === 0) {
+    myStationsGrid.innerHTML = `
+      <div style="grid-column: 1 / -1; text-align: center; padding: 40px; color: var(--text-dim);">
+        <h4>Nenhuma estação atribuída a você no momento.</h4>
+        <p>Você pode acompanhar o fluxo no Pipeline geral acima como observador.</p>
+      </div>
+    `;
+    return;
+  }
+
+  // Gera o painel de trabalho de cada estação atribuída
+  stationsToRender.forEach(st => {
+    const panel = createStationPanelElement(st, state);
+    myStationsGrid.appendChild(panel);
+  });
+}
+
+function createStationPanelElement(st, state) {
+  const panel = document.createElement("div");
+  panel.className = "station-panel";
+  panel.style.borderTop = `4px solid ${st.color}`;
+
+  const batches = st.batches || [];
+  const activeBatch = batches.length > 0 ? batches[0] : null;
+  const waitingBatchesCount = Math.max(0, batches.length - 1);
+
+  panel.innerHTML = `
+    <div class="station-panel-header">
+      <div class="st-title-group">
+        <span class="st-icon-bubble">${st.icon}</span>
+        <div class="st-panel-titles">
+          <h3>Estação ${st.id}: ${st.name}</h3>
+          <span>${st.assigned_player_name ? `Operador: ${st.assigned_player_name}` : "Vaga aberta"}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="station-panel-body">
+      <div class="panel-queue-stats">
+        <div class="queue-stat-item">
+          <span class="stat-label">Na Fila:</span>
+          <strong>${waitingBatchesCount} lote(s)</strong>
+        </div>
+        <div class="queue-stat-item">
+          <span class="stat-label">Lote em Processo:</span>
+          <strong>${activeBatch ? `#${activeBatch.batch_number} (${activeBatch.size} moedas)` : "Nenhum"}</strong>
+        </div>
+        <div class="queue-stat-item">
+          <span class="stat-label">Progresso:</span>
+          <strong>${activeBatch ? `${activeBatch.processed_count}/${activeBatch.size}` : "0/0"}</strong>
+        </div>
+      </div>
+
+      <div class="panel-progress-bar-container">
+        <div class="panel-progress-bar-fill" style="width: ${activeBatch ? activeBatch.progress_percent : 0}%;"></div>
+      </div>
+
+      <!-- Moedas Interativas -->
+      <div class="panel-coins-arena" id="arena-st-${st.id}">
+        ${renderPanelCoinsHTML(activeBatch, st.id)}
+      </div>
+
+      <!-- Botão de Despacho com Regra do Lote Fechado -->
+      <div class="panel-dispatch-area">
+        ${renderPanelDispatchHTML(activeBatch, st.id)}
+      </div>
+    </div>
+  `;
+
+  // Adiciona listeners para as moedas não processadas deste lote
+  if (activeBatch) {
+    activeBatch.coins.forEach((coin, idx) => {
+      if (!coin.processed) {
+        const coinEl = panel.querySelector(`.coin-wrapper[data-coin-idx="${idx}"]`);
+        if (coinEl) {
+          coinEl.addEventListener("click", () => {
+            soundCoinClick();
+            coinEl.classList.add("processed");
+            sendWsMessage({
+              action: "PROCESS_COIN",
+              batch_id: activeBatch.batch_id,
+              coin_idx: idx,
+              solo_override: soloOverride
+            });
+          });
+        }
+      }
+    });
+
+    // Listener do botão de envio
+    const btnDispatch = panel.querySelector(".btn-panel-dispatch");
+    if (btnDispatch && activeBatch.is_ready_to_send) {
+      btnDispatch.addEventListener("click", () => {
+        soundDispatch();
+        sendWsMessage({
+          action: "DISPATCH_BATCH",
+          batch_id: activeBatch.batch_id,
+          solo_override: soloOverride
+        });
+      });
+    }
+  }
+
+  return panel;
+}
+
+function renderPanelCoinsHTML(activeBatch, stationId) {
+  if (!activeBatch || !activeBatch.coins || activeBatch.coins.length === 0) {
+    return `
+      <div class="arena-empty-msg">
+        <span style="font-size: 28px;">⏳</span>
+        <span>Aguardando lote enviado pela estação anterior...</span>
+      </div>
+    `;
+  }
+
+  return activeBatch.coins.map((coin, idx) => `
+    <div class="coin-wrapper ${coin.processed ? "processed" : ""}" data-coin-idx="${idx}" title="${coin.processed ? "Processada (✓)" : "Clique para processar esta moeda"}">
       <div class="coin-inner">
         <div class="coin-face coin-front">
           <span class="coin-icon">🪙</span>
@@ -749,51 +829,48 @@ function renderCoinsArena(batch) {
           <span class="coin-text">PRONTA</span>
         </div>
       </div>
-    `;
-
-    if (!coin.processed) {
-      coinEl.addEventListener("click", () => {
-        soundCoinClick();
-        // Feedback visual instantâneo
-        coinEl.classList.add("processed");
-        sendWsMessage({
-          action: "PROCESS_COIN",
-          batch_id: batch.batch_id,
-          coin_idx: idx,
-          solo_override: soloOverride
-        });
-      });
-    }
-
-    coinsArena.appendChild(coinEl);
-  });
+    </div>
+  `).join("");
 }
 
-// --- Botão de Envio e Regra do Lote Fechado (CRÍTICO) ---
-function renderDispatchButton(batch, stationId) {
-  const isReady = batch.is_ready_to_send;
+function renderPanelDispatchHTML(activeBatch, stationId) {
+  if (!activeBatch) {
+    return `
+      <div class="panel-rule-badge">
+        <span>🔒 Aguardando chegada de lote</span>
+      </div>
+      <button class="btn-panel-dispatch" disabled>
+        <span>Aguardando Lote...</span>
+      </button>
+    `;
+  }
+
+  const isReady = activeBatch.is_ready_to_send;
   const isStation5 = stationId === 5;
+  const remaining = activeBatch.size - activeBatch.processed_count;
 
   if (isReady) {
-    btnDispatchBatch.disabled = false;
-    batchRuleBanner.className = "batch-rule-banner unlocked";
-    batchRuleText.innerHTML = `<strong>100% Processado!</strong> Lote pronto para envio para a próxima etapa.`;
-
-    if (isStation5) {
-      btnDispatchText.textContent = "🏆 Entregar Lote para CONCLUÍDO (Cliente) ✓";
-    } else {
-      btnDispatchText.textContent = `🚀 Enviar Lote #${batch.batch_number} para Estação ${stationId + 1} ➔`;
-    }
+    return `
+      <div class="panel-rule-badge unlocked">
+        <span>✓ 100% Processado! Pronto para avanço.</span>
+      </div>
+      <button class="btn-panel-dispatch">
+        <span>${isStation5 ? "🏆 Entregar para CONCLUÍDO (Cliente) ✓" : `🚀 Enviar Lote #${activeBatch.batch_number} para Estação ${stationId + 1} ➔`}</span>
+      </button>
+    `;
   } else {
-    btnDispatchBatch.disabled = true;
-    batchRuleBanner.className = "batch-rule-banner";
-    const remaining = batch.size - batch.processed_count;
-    batchRuleText.innerHTML = `<strong>Regra do Lote Fechado:</strong> Faltam <strong>${remaining}</strong> moeda(s) para liberar o botão de envio.`;
-    btnDispatchText.textContent = `🔒 Enviar Lote (${batch.processed_count}/${batch.size} moedas processadas)`;
+    return `
+      <div class="panel-rule-badge">
+        <span>🔒 Regra do Lote Fechado: Faltam ${remaining} moeda(s)</span>
+      </div>
+      <button class="btn-panel-dispatch" disabled>
+        <span>🔒 Enviar Lote (${activeBatch.processed_count}/${activeBatch.size})</span>
+      </button>
+    `;
   }
 }
 
-// --- Modal de Histórico e Comparativo ---
+// --- Modal de Histórico Comparativo ---
 function renderHistoryModal() {
   if (!currentRoomState) return;
   const history = currentRoomState.history || [];
@@ -821,7 +898,6 @@ function renderHistoryModal() {
     `;
   }).join("");
 
-  // Se houver pelo menos duas rodadas (ex: Cascata e Kanban), mostra análise comparativa
   const waterfall = history.find(h => h.round_type === "waterfall");
   const kanban = history.find(h => h.round_type === "kanban");
 
@@ -832,14 +908,14 @@ function renderHistoryModal() {
       Na rodada <strong>Kanban (Lote 2)</strong>, a primeira entrega de valor chegou ao cliente 
       <strong>${speedup}% mais rápido</strong> do que na rodada <strong>Cascata (Lote 10)</strong> (${kanban.first_delivery_time}s vs ${waterfall.first_delivery_time}s)!<br><br>
       <strong>Por que isso acontece?</strong><br>
-      • <strong>Menos Ociosidade (Starvation):</strong> As estações subsequentes não precisam esperar um lote gigante ser finalizado para começarem a trabalhar.<br>
-      • <strong>Menos Trabalho em Progresso (WIP):</strong> O fluxo contínuo reduz o acúmulo de estoques intermediários e gargalos.<br>
-      • <strong>Feedback Rápido:</strong> Se houver um defeito ou ajuste, o cliente e a equipe descobrem imediatamente no primeiro lote, em vez de após 20 moedas prontas!
+      • <strong>Menos Ociosidade (Starvation):</strong> As etapas seguintes não precisam esperar um lote de 10 moedas para começar a trabalhar.<br>
+      • <strong>Menor Trabalho em Progresso (WIP):</strong> O fluxo contínuo balanceia as etapas e evita a formação de estoques parados.<br>
+      • <strong>Feedback Rápido:</strong> O cliente recebe as primeiras entregas rapidamente, validando o trabalho antes de investir o tempo de todas as moedas.
     `;
   } else {
     pedagogicBox.style.display = "none";
   }
 }
 
-// Inicia quando o DOM carregar
+// Inicializa quando o DOM estiver pronto
 window.addEventListener("DOMContentLoaded", initApp);
